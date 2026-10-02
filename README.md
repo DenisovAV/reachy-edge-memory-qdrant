@@ -58,7 +58,7 @@ robot.
   network. No robot? The simulator below stands in for it.
 
 ```bash
-git clone https://github.com/DenisovAV/reachy-edge-memory.git && cd reachy-edge-memory
+git clone https://github.com/qdrant-labs/reachy-edge-memory.git && cd reachy-edge-memory
 uv sync
 uv run python -m emulator.models      # download every model up front
 ```
