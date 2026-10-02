@@ -1,0 +1,211 @@
+# What the robot knows about Qdrant. A line "question | fact" starts a fact:
+# the fact is what the robot says, spoken aloud as-is. Each line after it that
+# ends in a bare "|" is one more way to ask the same thing. The questions are
+# what a search compares against — never said — stored on the fact's one point
+# as a multivector (demo/knowledge.py): a short question finds an equally
+# short question far better than it finds the long sentence that answers it.
+#
+# After editing: `uv run python -m demo.knowledge build` (demo/stage.py does it
+# for you when this file is newer than demo/qdrant_knowledge.snapshot).
+#
+# Sources, checked 2026-09-13: the Qdrant README (github.com/qdrant/qdrant),
+# qdrant.tech/documentation/overview, qdrant.tech/documentation/edge,
+# qdrant.tech/documentation/edge/edge-synchronization-guide, qdrant.tech/about-us.
+# Nothing here that those pages do not say.
+
+What is Qdrant? | Qdrant, pronounced "quadrant", is an open-source vector database and vector similarity search engine.
+Tell me about Qdrant. |
+What does Qdrant do? |
+What kind of database is Qdrant? |
+What is Qdrant written in? | Qdrant is written in the Rust programming language, which makes it fast and reliable even under high load.
+Which programming language is Qdrant built in? |
+Is Qdrant written in Rust? |
+Is Qdrant open source, and under what license? | Qdrant's source code is open, under the Apache License 2.0.
+Can I use Qdrant for free? |
+What license does Qdrant have? |
+Who founded Qdrant, and when? | Qdrant was founded in 2021 by André Zayarni, the CEO, and Andrey Vasnetsov, the CTO.
+Who started Qdrant? |
+Who is behind Qdrant? |
+When was Qdrant created? |
+How many people work at Qdrant? | The Qdrant team has more than 100 employees in more than 20 countries.
+How big is the Qdrant team? |
+How large is the company? |
+How does Qdrant find things? | Qdrant searches by meaning, not by keywords: data becomes vector embeddings, and a search finds the closest ones.
+How does Qdrant search? |
+How does vector search find results? |
+Does Qdrant search by keywords? |
+What is a point in Qdrant? | A point in Qdrant is a vector with an optional JSON payload, identified by a 64-bit integer or a UUID.
+What does Qdrant store? |
+What is a point? |
+What is a collection in Qdrant? | A collection in Qdrant is a named set of points that you search within.
+What is a collection? |
+How is data organised in Qdrant? |
+What are named vectors? | Named vectors let a single Qdrant point hold several different embeddings.
+Can one point have several vectors? |
+What is a named vector? |
+What index does Qdrant use? | Qdrant uses HNSW, a Hierarchical Navigable Small World graph, to make similarity search fast.
+What is HNSW? |
+How is search made fast in Qdrant? |
+How does Qdrant filter while it searches? | Payload indexes extend the HNSW graph, so Qdrant filters during the search in a single pass.
+How does filtering work in Qdrant? |
+Can Qdrant filter and search at the same time? |
+What is ACORN in Qdrant? | ACORN is a Qdrant search algorithm that keeps results accurate with several high-cardinality filters.
+What is ACORN? |
+How does Qdrant stay accurate with many filters? |
+What can Qdrant filter on? | Qdrant filters on payload with keyword matching, full-text, numeric ranges and geo-locations, combined with must, should and must_not.
+What filters does Qdrant support? |
+Can Qdrant filter by location or by numbers? |
+Which kinds of vectors does Qdrant support? | Qdrant supports dense vectors for meaning, sparse vectors for keyword matching, and multivectors for late interaction models like ColBERT.
+Does Qdrant support sparse vectors? |
+What are multivectors? |
+What vector types are there? |
+What is hybrid search in Qdrant? | Hybrid search in Qdrant combines several vectors in one query and merges the results with Reciprocal Rank Fusion or Distribution-Based Score Fusion.
+What is hybrid search? |
+Can Qdrant combine keyword and semantic search? |
+How does Qdrant reduce memory use? | Quantization in Qdrant compresses vectors and cuts RAM usage by up to 97 percent, trading a little precision for speed and memory.
+What is quantization? |
+How does Qdrant save RAM? |
+Can Qdrant keep vectors on disk? | Qdrant can keep vectors on disk to manage memory in large deployments.
+Does Qdrant need everything in memory? |
+Can vectors live on disk? |
+How does Qdrant scale? | Qdrant scales horizontally with sharding and replication, and resizes collections with zero downtime.
+Can Qdrant handle a lot of data? |
+Does Qdrant support sharding and replication? |
+Does Qdrant support multitenancy? | Qdrant supports multitenancy: many users' data, kept apart, in one deployment.
+Can many users share one Qdrant? |
+What is multitenancy? |
+What APIs does Qdrant have? | Qdrant has a REST API with an OpenAPI 3.0 specification, and a gRPC interface for faster production searches.
+Does Qdrant have a REST API? |
+Does Qdrant support gRPC? |
+Which client libraries does Qdrant have? | Official Qdrant clients exist for Python, JavaScript and TypeScript, Rust, Go, Java and .NET.
+Which programming languages can talk to Qdrant? |
+Is there a Python client for Qdrant? |
+Can Qdrant recommend similar items? | Qdrant recommends similar points from positive and negative examples.
+Can Qdrant do recommendations? |
+How do recommendations work in Qdrant? |
+What is discovery search? | Discovery search in Qdrant constrains a search to a specific region of the vector space.
+What is discovery search in Qdrant? |
+Can Qdrant search in a region of the vector space? |
+Can Qdrant use GPUs? | Qdrant can accelerate indexing on NVIDIA and AMD GPUs.
+Does Qdrant run on a GPU? |
+Can indexing be accelerated? |
+What happens to Qdrant data in a power outage? | Qdrant uses write-ahead logging, so data persists even through a power outage.
+Is data safe if the power goes out? |
+How does Qdrant keep data durable? |
+What are Qdrant snapshots for? | Qdrant snapshots are for backups and disaster recovery.
+What is a snapshot? |
+How do you back up Qdrant? |
+Is there a managed Qdrant service? | Qdrant Cloud is the fully managed Qdrant service, and it has a free tier.
+What is Qdrant Cloud? |
+Can I use Qdrant without hosting it myself? |
+How can Qdrant be deployed? | Qdrant runs as self-hosted open source, as a managed cloud, as a hybrid cloud, or as a private cloud.
+Where can I run Qdrant? |
+Can I host Qdrant myself? |
+What is FastEmbed? | FastEmbed is Qdrant's library for making embeddings on the client; Cloud Inference makes them on the server.
+How do I make embeddings for Qdrant? |
+What is Cloud Inference? |
+Does Qdrant have a user interface? | Qdrant has a Web UI to explore collections, manage data and try the REST API.
+Is there a web UI for Qdrant? |
+Can I see my data in a browser? |
+What is Qdrant Edge? | Qdrant Edge is a lightweight, embedded vector search engine that runs inside the application process, with no server.
+Tell me about Qdrant Edge. |
+What does Qdrant Edge do? |
+What is the edge version of Qdrant? |
+What is Qdrant Edge like? | Qdrant Edge is like SQLite, but for vector search.
+What is Qdrant Edge similar to? |
+Is Qdrant Edge like SQLite? |
+Where does Qdrant Edge run? | Qdrant Edge runs on robots, kiosks, home assistants and mobile phones, even where the network is limited or intermittent.
+What devices can run Qdrant Edge? |
+Does Qdrant Edge work without internet? |
+Does data leave the device with Qdrant Edge? | With Qdrant Edge, data is stored and searched locally, so it does not have to leave the device.
+Does Qdrant Edge send my data to the cloud? |
+Is Qdrant Edge private? |
+What is an Edge Shard? | The heart of Qdrant Edge is the Edge Shard, a self-contained storage unit.
+What is inside Qdrant Edge? |
+How does Qdrant Edge store data? |
+Which languages can use Qdrant Edge? | You can use Qdrant Edge from Python with the qdrant-edge-py package, or from Rust with the qdrant-edge crate.
+How do I use Qdrant Edge from Python? |
+Is there a Rust library for Qdrant Edge? |
+Can Qdrant Edge make embeddings on the device? | Qdrant Edge can make embeddings and BM25 sparse vectors right on the device.
+Can Qdrant Edge create vectors itself? |
+Does Qdrant Edge support BM25? |
+How does Qdrant Edge get data from a server? | Qdrant Edge restores snapshots made by a Qdrant server, and applies partial snapshots for incremental updates.
+How do I load data into Qdrant Edge? |
+Can Qdrant Edge use snapshots? |
+Can Qdrant Edge sync back to a server? | Qdrant Edge can sync with a Qdrant server, and updates made on the device can be uploaded back to the server.
+Does Qdrant Edge synchronise with the cloud? |
+Can the device upload its data? |
+Is Qdrant Edge stable? | Qdrant Edge is in beta, so its API may still change.
+Is Qdrant Edge ready for production? |
+Is Qdrant Edge in beta? |
+How do you know about Qdrant? | I learned about Qdrant from a knowledge snapshot loaded onto me, and I search it with Qdrant Edge right here on the robot.
+Where do your facts about Qdrant come from? |
+Who told you about Qdrant? |
+
+# How this robot itself works — the questions a room asks after the demo.
+What kind of robot are you? | I am a Reachy Mini, a desk robot with a camera, a microphone and a Raspberry Pi inside — I remember what I see and hear using Qdrant Edge, running right here on my own disk.
+What sort of machine are you? |
+Are you a robot? |
+What exactly is this robot? |
+How do you work? | I hear, see and remember everything with Qdrant Edge, a vector database running right here on the robot.
+How does this robot work? |
+Explain how you work. |
+What happens inside you? |
+How does your memory work? | Everything I see and hear becomes a vector in Qdrant Edge, the database running inside me.
+How does memory work in this robot? |
+How is your memory built? |
+How do you store what you see? |
+Where is your memory stored? | My memory lives on my own disk, in Qdrant Edge shards, and it stays there.
+Where do you keep your memories? |
+Is your memory in the cloud? |
+Does anything leave the robot? | My memory never leaves me. I send audio and pictures to a laptop to be turned into vectors, and the vectors come back and are stored here.
+Do you send my data anywhere? |
+Is my data private with you? |
+Why is there a laptop? | The laptop only holds the models, because they are too heavy for me today. Everything I remember is stored and searched on me.
+What is the laptop for? |
+Why do you need a computer next to you? |
+Which models do you use? | Whisper hears you, Gemma 4 does the thinking and the seeing, SigLIP turns my pictures into vectors, and bge turns words into vectors.
+What AI models run you? |
+Which language model do you use? |
+How many separate stores do you have? | Three shards: one for what happened, one for faces, and one for the facts loaded before the demo.
+How is your memory organised? |
+How many shards do you have? |
+How is a picture stored in your memory? | A picture becomes a vector with SigLIP, kept beside the objects and the names that were in it.
+How do you remember pictures? |
+What happens to what your camera sees? |
+How is a conversation stored in your memory? | Once a line leaves my short context window it is embedded with bge and written into Qdrant Edge.
+How is a conversation saved? |
+Where does a conversation go when it gets long? |
+What happens when the context window fills up? | The oldest half of it is written into Qdrant Edge in one batch, and nothing is lost.
+What if you run out of context? |
+What happens when your context window is full? |
+How does your face recognition work? | One point per person holds several shots of their face as a multivector, and a new face is compared against all of them at once.
+How do you recognise people? |
+How do you recognise a face? |
+How would you forget a person? | Each person is one point in the faces shard, so forgetting someone is deleting a single point.
+Can a person be deleted from your memory? |
+How do I delete myself from your memory? |
+Is anything overwritten when facts change? | Nothing is overwritten. The memory is an append-only log, and a newer line simply joins the older one.
+Do you overwrite old memories? |
+What happens when something changes? |
+How does vector search work here? | A question becomes a vector, and the database returns the stored vectors closest to it by cosine distance.
+How do you search your memory? |
+What is vector search? |
+Does a stored picture have more than one vector? | Yes, a picture carries two named vectors: one for the image itself and one for the words describing what was in it.
+How many vectors does a picture have? |
+Can you search pictures by words? |
+How fast is your memory? | Searching my own memory takes milliseconds, because Qdrant Edge runs inside my process, with no server and no network.
+How fast is a search in your memory? |
+Is searching your memory slow? |
+Does a restart lose the memory? | No, the shards are files on the robot's disk, so everything survives a restart.
+Do you forget everything when you turn off? |
+What happens to your memory after a reboot? |
+How did you learn about Qdrant? | The facts about Qdrant were loaded onto me as a snapshot before the demo, and I search them on the robot like everything else.
+How were the Qdrant facts loaded? |
+Were you taught about Qdrant? |
+Why do you use Qdrant Edge and not a server? | A server would mean sending everything I see to another machine. Qdrant Edge runs inside me, so what I remember stays with me.
+Why not use a cloud database? |
+Why is the database on the robot? |
+Who made this demo? | I was built as a demo for Qdrant, to show that a small robot can keep its own memory on board.
+Who built you? |
+What was this robot demo built for? |

@@ -1,0 +1,551 @@
+<!-- demo/display/static/dashboard.html -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reachy — vision</title>
+<style>
+  /* What the room sees: the live
+     view top-left and WHOLE, the conversation as a column beside it, the
+     remembered frames as a strip across the bottom. The eye then travels from
+     the present to the past, which is the talk's claim said by the
+     arrangement itself.
+
+     The frame is never cropped at any size, which is what the old `2fr 1fr`
+     grid could not do: a picture stretched to the width of a wide short cell
+     with `overflow: hidden` loses its top and bottom. So the 16:9 box is
+     computed rather than filled — its height is what is left under the strip,
+     its width follows from the aspect, and the column takes the rest. */
+  :root {
+    --gap: 10px;
+    --pad: 10px;
+    /* The bottom strip: a heading, five 16:9 thumbnails side by side, and a
+       score under each. Five across the bottom is why the strip is here at
+       all — three is what fits down a column, and a day's answer is three
+       frames with room for the one before it. */
+    --strip: 230px;
+    --thumb-h: calc(var(--strip) - 60px);
+    /* How far the transcript may be squeezed before the frame gives up width
+       instead: a dozen lines of "Heard:"/"Reply:" still read at this width. */
+    --col-min: 380px;
+    /* 1920x1080: 1080 - 230 of strip - 30 of padding and gap = 820 of height,
+       so a 16:9 frame 1457 wide, so 433 left for the column. Nothing empty,
+       nothing cropped. A window too short for that keeps a floor rather than
+       computing a negative width. */
+    --video-h-max: max(180px, calc(100vh - var(--strip)
+                                   - 2 * var(--pad) - var(--gap)));
+    --video-w: min(calc(var(--video-h-max) * 16 / 9),
+                   calc(100vw - 2 * var(--pad) - var(--gap) - var(--col-min)));
+    --video-h: calc(var(--video-w) * 9 / 16);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d0f12; color: #e6e6e6;
+         font: 14px/1.4 -apple-system, system-ui, sans-serif; }
+  .grid { display: grid; gap: var(--gap); padding: var(--pad); height: 100vh;
+          grid-template-columns: var(--video-w) minmax(0, 1fr);
+          grid-template-rows: var(--video-h) minmax(var(--strip), 1fr); }
+  .stage { grid-column: 1; grid-row: 1; position: relative; background: #000;
+           border-radius: 8px; overflow: hidden; }
+  /* object-fit: contain, not a stretch to the box: the capture is 960x540 so
+     the two coincide exactly, and a frame that is not 16:9 (an older camera
+     service still sending 4:3) is letterboxed rather than cropped. */
+  .stage img { position: absolute; inset: 0; width: 100%; height: 100%;
+               object-fit: contain; display: block; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .column { grid-column: 2; grid-row: 1; }
+  .strip { grid-column: 1 / -1; grid-row: 2; }
+  .panel { background: #16191d; border-radius: 8px; padding: 10px;
+           overflow: auto; }
+  /* An ASR transcript has no spaces to break at when it goes wrong; in a
+     380px column one such line would push the whole panel sideways. */
+  .column { overflow-wrap: anywhere; }
+  .panel h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase;
+              color: #8a94a0; letter-spacing: .05em; }
+  .controls { position: absolute; top: 12px; right: 12px; z-index: 2;
+              display: flex; gap: 8px; }
+  .btn { padding: 9px 18px; border-radius: 999px; border: 1px solid #39404a;
+         background: rgba(13,15,18,.82); color: #e6e6e6; font: inherit;
+         cursor: pointer; }
+  .btn:hover { background: rgba(13,15,18,.96); }
+  .btn[disabled] { opacity: .6; cursor: default; }
+  .btn.on { background: #ffd479; border-color: #ffd479; color: #1a1200; }
+  /* Streaming: green, and it says what the click will do — stop it. Grey
+     while the robot is asleep. */
+  .btn.live { background: #38d66b; border-color: #38d66b; color: #04120a; }
+  /* Armed: the first click on Restart asks, the second one erases. No modal
+     — a dialog on a projector is worse than a button that says what it is
+     about to do. */
+  .btn.armed { background: #ff9f6b; border-color: #ff9f6b; color: #200c00; }
+  .stage.paused img { filter: grayscale(1) brightness(.45); }
+  /* The stream is off: say so. A black rectangle on a projector reads as a
+     broken demo, and the room cannot tell one from the other. */
+  .sleeping { position: absolute; inset: 0; display: none; background: #16191d;
+              align-items: center; justify-content: center; color: #8a94a0;
+              font-size: 17px; letter-spacing: .06em; }
+  .stage.asleep .sleeping { display: flex; }
+  .stage.asleep img, .stage.asleep canvas { display: none; }
+  .heard { color: #9ecbff; } .reply { color: #b6f0b6; margin-top: 6px; }
+  .recalled { margin-top: 10px; color: #c9b6ff; font-size: 13px; }
+  .recalled .lbl { color: #8a94a0; text-transform: uppercase; font-size: 11px;
+                   letter-spacing: .05em; display: block; margin-bottom: 3px; }
+  /* "Remembered": the filmstrip of frames Qdrant recalled, across the bottom.
+     Sized by HEIGHT, from the strip's own 230px (10+10 padding, ~24 heading,
+     ~16 score line): 170px tall makes a 16:9 thumbnail 302px wide, so five of
+     them plus gaps take 1542px of a 1920 screen and still fit. Sized by width
+     instead — a fifth of the row each — a 365px thumbnail is 205px tall and
+     the strip no longer holds it. `width: auto` so a stored 4:3 frame keeps
+     its own shape and the boxes drawn over it still land where they belong. */
+  .recall { display: flex; gap: 8px; overflow-x: auto; align-items: flex-start;
+            min-height: var(--thumb-h); }
+  .recall .ritem { position: relative; flex: 0 0 auto; }
+  .recall .shot { position: relative; display: block; }
+  .recall .shot img { height: var(--thumb-h); width: auto; border-radius: 4px;
+                      display: block; }
+  /* No width/height here on purpose: drawBoxes sizes the canvas in pixels
+     from the picture it is drawn over, so left-aligning it is enough to make
+     it cover exactly that, whatever shape the stored frame turned out to be. */
+  .recall .shot canvas { position: absolute; top: 0; left: 0; }
+  .recall .ritem.weak img { opacity: .45; }
+  .recall .rscore { color: #5b6470; font-size: 11px; margin-top: 2px; }
+  .recall .ritem.weak .rscore { color: #ffd479; }
+  .recall .empty, .recalled .empty { color: #5b6470; font-style: italic; }
+  .ctxbar { height: 6px; background: #22262c; border-radius: 3px;
+            overflow: hidden; }
+  .ctxbar span { display: block; height: 100%; width: 0; background: #38d66b;
+                 transition: width .35s ease; }
+  .ctxbar.full span { background: #ffd479; }
+  .ctxbar.over span { background: #ff9f6b; }
+  .ctxlabel { color: #8a94a0; font-size: 11px; letter-spacing: .05em;
+              text-transform: uppercase; margin: 4px 0 8px; }
+  .count { color: #7fd1ff; text-transform: none; letter-spacing: 0; }
+  .tool { margin-top: 8px; color: #ffd479; font-size: 13px; min-height: 1em; }
+  /* the picture the camera tool gave the model, under the tool line */
+  .look:empty { display: none; }
+  .look { margin-top: 6px; }
+  .look img { display: block; max-width: 100%; max-height: 180px; border-radius: 4px; }
+  .memwrite { margin-top: 10px; color: #7fd1ff; font-size: 13px; }
+  .memwrite .lbl { color: #8a94a0; text-transform: uppercase; font-size: 11px;
+                   display: block; margin-bottom: 4px; }
+  /* Below ~1280px there is no width left for a column beside a frame that
+     keeps its aspect, so the three panels stack and the strip goes under the
+     transcript — the reading order survives even when the arrangement cannot. */
+  @media (max-width: 1280px) {
+    .grid { grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: auto auto auto;
+            height: auto; min-height: 100vh; }
+    .stage { grid-column: 1; grid-row: 1; width: 100%; aspect-ratio: 16 / 9; }
+    .column { grid-column: 1; grid-row: 2; min-height: 220px; }
+    .strip { grid-column: 1; grid-row: 3; }
+  }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div class="stage" id="stage">
+    <!-- alt="" on purpose: until the stream is up the browser draws the alt
+         text over the black stage, and a broken-image icon in the corner is
+         the first thing a room sees. The asleep panel below says it
+         properly when the robot really is asleep. -->
+    <img id="live" alt="">
+    <canvas id="liveBoxes"></canvas>
+    <div class="sleeping">the robot is asleep</div>
+    <div class="controls">
+      <button id="stream" class="btn">▶ Stream on</button>
+      <button id="restart" class="btn">Restart</button>
+      <button id="pause" class="btn">Pause</button>
+    </div>
+  </div>
+  <div class="panel column">
+    <h2>Conversation</h2>
+    <div class="ctxbar"><span id="ctxfill"></span></div>
+    <div class="ctxlabel" id="ctxlabel">context: waiting for the first turn</div>
+    <div class="heard" id="heard"></div>
+    <div class="reply" id="reply"></div>
+    <div class="tool" id="tool"></div>
+    <div class="look" id="look"></div>
+    <div class="recalled" id="speechRecall">
+      <span class="empty">nothing recalled yet</span>
+    </div>
+    <div class="memwrite" id="memwrite"></div>
+  </div>
+  <div class="panel strip">
+    <h2>Remembered <span class="count" id="memcount"></span></h2>
+    <div class="recall" id="recall">
+      <span class="empty">ask what it saw…</span>
+    </div>
+  </div>
+</div>
+<script>
+const COLOR = "#38d66b";
+// Draw normalized [x1,y1,x2,y2] boxes onto a canvas overlaid on an image.
+function drawBoxes(canvas, imgEl, boxes) {
+  const w = imgEl.clientWidth, h = imgEl.clientHeight;
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineWidth = 2; ctx.strokeStyle = COLOR; ctx.fillStyle = COLOR;
+  ctx.font = "13px sans-serif";
+  for (const b of boxes) {
+    const [x1, y1, x2, y2] = b.box;
+    const rx = x1 * w, ry = y1 * h, rw = (x2 - x1) * w, rh = (y2 - y1) * h;
+    ctx.strokeRect(rx, ry, rw, rh);
+    const tag = `${b.label} ${b.score.toFixed(2)}`;
+    ctx.fillRect(rx, ry - 16, ctx.measureText(tag).width + 8, 16);
+    ctx.save(); ctx.fillStyle = "#04120a";
+    ctx.fillText(tag, rx + 4, ry - 4); ctx.restore();
+  }
+}
+const FACE_COLOR = "#ffd479";
+// The face the robot is looking at, drawn over the live view with the name it
+// recognised — the same name it uses out loud and writes into its memory.
+function drawFace(canvas, imgEl, face) {
+  if (!face || !face.box) return;
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  const [x1, y1, x2, y2] = face.box;
+  const rx = x1 * w, ry = y1 * h, rw = (x2 - x1) * w, rh = (y2 - y1) * h;
+  ctx.lineWidth = 3; ctx.strokeStyle = FACE_COLOR;
+  ctx.strokeRect(rx, ry, rw, rh);
+  const tag = face.name ? face.name : "someone new";
+  ctx.font = "15px sans-serif";
+  const width = ctx.measureText(tag).width + 10;
+  ctx.fillStyle = FACE_COLOR;
+  ctx.fillRect(rx, Math.max(0, ry - 20), width, 20);
+  ctx.fillStyle = "#1a1200";
+  ctx.fillText(tag, rx + 5, Math.max(13, ry - 5));
+}
+const live = document.getElementById("live");
+const liveBoxes = document.getElementById("liveBoxes");
+let lastLiveBoxes = [];
+const es = new EventSource("/events");
+let lastFace = null;
+function paintLive() {
+  drawBoxes(liveBoxes, live, lastLiveBoxes);
+  drawFace(liveBoxes, live, lastFace);
+}
+es.addEventListener("detections", e => {
+  lastLiveBoxes = JSON.parse(e.data).boxes;
+  paintLive();
+});
+es.addEventListener("face", e => {
+  const d = JSON.parse(e.data);
+  lastFace = d.box ? d : null;
+  paintLive();
+});
+const lookEl = document.getElementById("look");
+es.addEventListener("heard", e => {
+  document.getElementById("heard").textContent = "Heard: " + JSON.parse(e.data).text;
+  document.getElementById("reply").textContent = "";
+  lookEl.replaceChildren();
+});
+// The picture the camera tool gave the model this turn — fetched by URL, like
+// a recalled frame (a picture inside the event never reached the page).
+es.addEventListener("look", e => {
+  const img = document.createElement("img");
+  img.alt = "what the model saw";
+  img.src = JSON.parse(e.data).url;
+  lookEl.replaceChildren(img);
+});
+es.addEventListener("reply", e => {
+  document.getElementById("reply").textContent = "Reply: " + JSON.parse(e.data).text;
+});
+// The frames Qdrant recalled for this turn — the SAME search that grounds the
+// spoken reply. The robot has no screen; this strip is where "what it saw"
+// becomes visible, each frame drawn with its YOLO box.
+// on_recall (demo/display/web.py) now broadcasts even on a miss (empty
+// `frames`) rather than skipping the event — a suppressed event used to
+// leave the PREVIOUS question's frames on screen during an unrelated
+// answer, so render the miss as its own resting state instead.
+const recallEl = document.getElementById("recall");
+es.addEventListener("recall", e => {
+  const frames = JSON.parse(e.data).frames || [];
+  recallEl.innerHTML = "";
+  if (!frames.length) {
+    recallEl.innerHTML = '<span class="empty">nothing recalled</span>';
+    return;
+  }
+  for (const f of frames) {
+    const item = document.createElement("div");
+    // A weak match is shown dimmed with its score rather than hidden: the
+    // model answered from it, so the room should see what it answered from.
+    item.className = f.weak ? "ritem weak" : "ritem";
+    // The picture and its canvas share one shrink-wrapping box, so the boxes
+    // land on the frame whatever shape it was stored in.
+    const shot = document.createElement("div");
+    shot.className = "shot";
+    const img = document.createElement("img");
+    const cv = document.createElement("canvas");
+    shot.appendChild(img); shot.appendChild(cv);
+    item.appendChild(shot);
+    if (typeof f.score === "number") {
+      const tag = document.createElement("div");
+      tag.className = "rscore";
+      tag.textContent = f.score.toFixed(2) + (f.weak ? " · weak match" : "");
+      item.appendChild(tag);
+    }
+    recallEl.appendChild(item);
+    // Draw boxes only once the thumbnail has laid out (clientWidth is 0 until then).
+    img.onload = () => drawBoxes(cv, img, f.boxes);
+    img.src = f.url || ("data:image/jpeg;base64," + f.jpeg_b64);
+  }
+});
+// Speech recall: past utterances matched by meaning ("search by what was said").
+// The text is an ASR transcript (untrusted) — build the panel from DOM nodes
+// with textContent, never innerHTML, so a transcript can't inject markup.
+// Empty is broadcast explicitly on a miss (emulator/memory.py's score gate,
+// demo/display/web.py on_speech_recall) — render THAT as a resting state
+// rather than leaving the previous turn's recalled quote on screen.
+const speechEl = document.getElementById("speechRecall");
+es.addEventListener("speech_recall", e => {
+  const items = JSON.parse(e.data).items || [];
+  speechEl.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "nothing recalled";
+    speechEl.appendChild(empty);
+    return;
+  }
+  const lbl = document.createElement("span");
+  lbl.className = "lbl";
+  // Facts from the knowledge snapshot are not memories: say where they came from.
+  const allKnowledge = items.every(it => it.source === "knowledge");
+  const allFaces = items.every(it => it.source === "faces");
+  lbl.textContent = allKnowledge ? "from the knowledge base"
+                  : allFaces ? "recognised" : "recalled";
+  speechEl.appendChild(lbl);
+  items.forEach((it, i) => {
+    if (i) speechEl.appendChild(document.createTextNode("  ·  "));
+    const q = document.createElement("span");
+    const where = it.source === "context" ? " (still in context)"
+                : it.source === "knowledge" && !allKnowledge ? " (knowledge base)" : "";
+    q.textContent = "“" + it.text + "”" + where;
+    speechEl.appendChild(q);
+  });
+});
+// How full the model's context is, and how much the robot holds. The bar
+// filling and then dropping IS the story: what leaves the context is what
+// moves into Qdrant on the robot.
+const ctxFill = document.getElementById("ctxfill");
+const ctxLabel = document.getElementById("ctxlabel");
+es.addEventListener("context", e => {
+  const d = JSON.parse(e.data);
+  const turns = d.exchanges + (d.exchanges === 1 ? " exchange" : " exchanges");
+  if (d.tokens === null || d.tokens === undefined) {
+    // An image turn ran in a side chat and reports no count — leave the bar
+    // where it was rather than drawing a drop that did not happen.
+    ctxLabel.textContent = "context: " + turns + " in the window";
+    return;
+  }
+  const share = Math.max(0, Math.min(1, d.tokens / d.budget));
+  const over = d.tokens > d.budget;
+  ctxFill.style.width = (share * 100).toFixed(0) + "%";
+  // Over budget is not a broken counter: this is what the context held at the
+  // end of the turn, and the oldest part of it is on its way to Qdrant.
+  ctxFill.parentElement.classList.toggle("full", share >= 0.85 && !over);
+  ctxFill.parentElement.classList.toggle("over", over);
+  ctxLabel.textContent = "context: " + d.tokens + " / " + d.budget
+                       + " tokens · " + turns + (over ? " · evicting" : "");
+});
+es.addEventListener("memory_count", e => {
+  const d = JSON.parse(e.data);
+  document.getElementById("memcount").textContent =
+    "· " + d.frames + " frames · " + d.exchanges + " conversations on the robot"
+    + (d.knowledge ? " · " + d.knowledge + " Qdrant facts from a snapshot" : "");
+});
+// Every tool this turn called. Written SHORT — `→ remember · seen` — because
+// the full call (remember(query="what did you see today", about="seen")) does
+// not fit a 380px column and wrapped over three lines. The whole call is the
+// tooltip, so the query is a hover away rather than gone. They accumulate: a
+// turn can search memory AND move. Names and arguments come from the model,
+// so they go in as textContent and as a title property, never innerHTML.
+const toolEl = document.getElementById("tool");
+let turnCalls = [];
+function toolLabel(call) {
+  const args = call.arguments || {};
+  // The one argument that says which KIND of call it was: `about` for
+  // remember, `direction` for a look, the gesture or dance for the body.
+  const which = args.about || args.direction || args.gesture || args.name;
+  return call.name + (which ? " · " + which : "");
+}
+function toolFull(call) {
+  const args = Object.entries(call.arguments || {})
+    .map(([k, v]) => k + "=" + JSON.stringify(v)).join(", ");
+  return call.name + "(" + args + ")";
+}
+function paintTools() {
+  toolEl.replaceChildren();
+  if (!turnCalls.length) return;
+  toolEl.appendChild(document.createTextNode("→ "));
+  turnCalls.forEach((call, i) => {
+    if (i) toolEl.appendChild(document.createTextNode("   ·   "));
+    const span = document.createElement("span");
+    span.textContent = toolLabel(call);
+    span.title = toolFull(call);
+    toolEl.appendChild(span);
+  });
+}
+es.addEventListener("heard", () => { turnCalls = []; paintTools(); });
+es.addEventListener("tool_call", e => {
+  turnCalls.push(JSON.parse(e.data));
+  paintTools();
+});
+// Exchanges that just left the model's context for Qdrant Edge on the robot.
+const memEl = document.getElementById("memwrite");
+es.addEventListener("memory_write", e => {
+  const items = JSON.parse(e.data).items || [];
+  memEl.replaceChildren();
+  if (!items.length) return;
+  const lbl = document.createElement("span");
+  lbl.className = "lbl";
+  lbl.textContent = items.length + (items.length === 1 ? " exchange" : " exchanges")
+                  + " left the context → Qdrant Edge, on the robot";
+  memEl.appendChild(lbl);
+  items.forEach(t => {
+    const row = document.createElement("div");
+    row.textContent = t;
+    memEl.appendChild(row);
+  });
+});
+// The pause. The flag lives on this dashboard; the robot reads it before
+// each turn (demo/run_demo.py's _wait_while_paused), so a turn already being
+// spoken finishes rather than being cut off.
+const pauseBtn = document.getElementById("pause");
+const stageEl = document.getElementById("stage");
+let paused = false;
+function renderPaused(value) {
+  paused = value;
+  pauseBtn.textContent = value ? "Resume" : "Pause";
+  pauseBtn.classList.toggle("on", value);
+  stageEl.classList.toggle("paused", value);
+}
+pauseBtn.addEventListener("click", () => {
+  const wanted = !paused;
+  renderPaused(wanted);
+  fetch("/control", {method: "POST", headers: {"Content-Type": "application/json"},
+                     body: JSON.stringify({paused: wanted})})
+    .then(r => { if (!r.ok) throw new Error(r.status); })
+    .catch(() => renderPaused(!wanted));  // it did not take — show the truth
+});
+// Stream on / off. This page cannot reach the robot at all: it asks
+// (POST /control {"stream": true|false}) and demo/stage.py — the process
+// that already runs scripts/robot_service.sh — polls the request, spends the
+// 15-20 s (camera+mic service, motors, wake_up, the voice loop; the other way
+// round the loop, the service and goto_sleep) and acknowledges with the state
+// the robot ACTUALLY ended up in. So the truth always comes back from the
+// server; the click only asks.
+const streamBtn = document.getElementById("stream");
+// `null` is not "off": it means nobody is managing the stream at all (a
+// dashboard run on its own, or the in-process `--display web` debug mode,
+// where the camera is live and no stage is polling). Claiming "the robot is
+// asleep" over a working camera would be its own broken demo.
+let stream = {stream: null, streaming: null};
+let pageLoaded = false;
+function renderStream(state) {
+  stream = state;
+  const pending = state.stream === true || state.stream === false;
+  const on = state.streaming !== false;
+  streamBtn.disabled = pending;
+  streamBtn.classList.toggle("live", state.streaming === true && !pending);
+  streamBtn.textContent = pending ? (state.stream ? "Starting…" : "Stopping…")
+                        : state.streaming === true ? "■ Stream off"
+                        : "▶ Stream on";
+  // The transcript and the filmstrip keep their last state on purpose: what
+  // the robot remembered is still true while it sleeps.
+  stageEl.classList.toggle("asleep", !on);
+  applyLive();
+}
+streamBtn.addEventListener("click", () => {
+  const wanted = stream.streaming !== true;
+  renderStream({stream: wanted, streaming: stream.streaming});
+  fetch("/control", {method: "POST", headers: {"Content-Type": "application/json"},
+                     body: JSON.stringify({stream: wanted})})
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(renderStream)
+    .catch(() => renderStream({stream: null, streaming: stream.streaming}));
+});
+// One payload carries every button (demo/display/web.py's control_state), so
+// a page opened halfway through the demo, and the second screen at the back
+// of the room, show what the one that was clicked shows.
+function renderControl(d) {
+  renderPaused(d.paused);
+  renderStream({stream: d.stream === undefined ? null : d.stream,
+                streaming: d.streaming === undefined ? null : d.streaming});
+}
+es.addEventListener("control", e => renderControl(JSON.parse(e.data)));
+fetch("/control").then(r => r.json()).then(renderControl).catch(() => {});
+// Restart: the robot wipes everything it remembers and starts the loop again
+// (demo/run_demo.py's _RestartWatcher -> scripts/voice_loop.sh). It erases
+// the demo's memory, so it asks first — the first click arms the button for a
+// few seconds and says what it will do, the second one sends it. An inline
+// question, not a confirm() dialog: this page is on a projector.
+const restartBtn = document.getElementById("restart");
+let armed = null;
+function disarm() {
+  clearTimeout(armed); armed = null;
+  restartBtn.textContent = "Restart";
+  restartBtn.classList.remove("armed");
+}
+restartBtn.addEventListener("click", () => {
+  if (armed === null) {
+    restartBtn.textContent = "Erase memory?";
+    restartBtn.classList.add("armed");
+    armed = setTimeout(disarm, 4000);
+    return;
+  }
+  disarm();
+  restartBtn.textContent = "Restarting…";
+  restartBtn.disabled = true;
+  fetch("/control", {method: "POST", headers: {"Content-Type": "application/json"},
+                     body: JSON.stringify({restart: true})})
+    .then(r => { if (!r.ok) throw new Error(r.status); })
+    .catch(() => { restartBtn.textContent = "Restart failed"; })
+    .finally(() => setTimeout(() => {
+      restartBtn.disabled = false; restartBtn.textContent = "Restart";
+    }, 3000));
+});
+// The wipe itself: clear every panel back to its resting state, so nothing on
+// screen describes a conversation the robot no longer has. Broadcast to every
+// open page (demo/display/web.py's request_restart), not just the one that
+// pressed the button.
+es.addEventListener("reset", () => {
+  document.getElementById("heard").textContent = "";
+  document.getElementById("reply").textContent = "";
+  turnCalls = []; paintTools();
+  lookEl.replaceChildren();
+  memEl.replaceChildren();
+  speechEl.replaceChildren();
+  const waiting = document.createElement("span");
+  waiting.className = "empty";
+  waiting.textContent = "nothing recalled yet";
+  speechEl.appendChild(waiting);
+  recallEl.innerHTML = '<span class="empty">ask what it saw…</span>';
+  ctxFill.style.width = "0%";
+  ctxFill.parentElement.classList.remove("full", "over");
+  ctxLabel.textContent = "context: waiting for the first turn";
+  document.getElementById("memcount").textContent = "";
+  lastFace = null; lastLiveBoxes = []; paintLive();
+});
+window.addEventListener("resize", paintLive);
+// Attach the never-ending MJPEG stream only after the page has finished
+// loading, so the browser fires `load` and does not spin forever — and only
+// while the robot is up: asking a camera service that has been stopped for
+// frames every two seconds is a retry loop nobody can see the point of.
+function applyLive() {
+  if (!pageLoaded) return;
+  const wanted = stream.streaming !== false;
+  if (wanted && !live.getAttribute("src")) live.src = "/live.mjpeg";
+  if (!wanted && live.getAttribute("src")) live.removeAttribute("src");
+}
+// The robot's camera can come up after this page (a robot that has just
+// booted): a stream that fails is asked for again rather than left broken.
+live.addEventListener("error", () => {
+  setTimeout(() => {
+    if (stream.streaming === false) return;
+    live.removeAttribute("src"); live.src = "/live.mjpeg";
+  }, 2000);
+});
+window.addEventListener("load", () => { pageLoaded = true; applyLive(); });
+</script>
+</body>
+</html>

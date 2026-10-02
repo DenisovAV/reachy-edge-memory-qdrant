@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Run outputs: the robot's memory when the loop runs on this machine
+results/
+*.jsonl
+
+# The face embedder, converted locally (scripts/convert_hsface.py); every
+# other model comes from the Hugging Face cache
+assets/
+
+# OS / editor
+.DS_Store

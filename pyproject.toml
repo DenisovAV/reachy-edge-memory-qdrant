@@ -1,0 +1,48 @@
+[project]
+name = "reachy-edge-memory"
+version = "0.1.0"
+description = "A Reachy Mini robot that remembers what it sees and hears, with Qdrant Edge on board"
+license = "Apache-2.0"
+requires-python = "==3.12.*"
+dependencies = [
+    # The language model, in-process (emulator/engines.py).
+    "litert-lm==0.15.0",
+    # The detector, the robot's speech recognizer and the voice.
+    "ai-edge-litert==2.1.6",
+    # Required by LiteRT's CompiledModel API.
+    "ml-dtypes>=0.5",
+    # Every model is fetched from Hugging Face by name (emulator/models.py).
+    "huggingface-hub>=0.28",
+    "numpy>=2.0",
+    "pillow>=11.0",
+    # The memory: Qdrant Edge, an embedded engine inside the robot's own
+    # process — not qdrant-client, which talks to a server.
+    "qdrant-edge-py>=0.8.0",
+    # bge-small sentence embeddings for what was said, and the knowledge base.
+    "fastembed",
+    # SigLIP 2 frame embeddings, torch-free on onnxruntime (emulator/frame_memory.py).
+    "onnxruntime>=1.20",
+    "tokenizers>=0.20",
+    # Speech recognition on the laptop (emulator/whisper_asr.py).
+    "faster-whisper>=1.2.1",
+    # Faces: OpenCV's YuNet detector (emulator/face.py).
+    "opencv-python-headless>=5.0.0.93",
+    # The voice's text frontend (Inflect-Nano-v2's frontend/, fetched with the
+    # model): numbers as words, text to phonemes. phonemizer and
+    # espeakng-loader bring espeak-ng, which is GPL-3.0 — see NOTICE.
+    "num2words>=0.5",
+    "unidecode>=1.3",
+    "phonemizer>=3.2",
+    "espeakng-loader>=0.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+# Run from the repository root (`python -m demo.<module>`); nothing to build.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
