@@ -349,15 +349,16 @@ def recall_seen(query: str, *, frame_memory=None,
     finds 8.
 
     direction ("left"/"right") gives the last frame taken with the head turned
-    that way: "what was on your left?" is about the last look there, and the
-    words of the question say nothing a frame's words can match.
+    that way: "what was on your left?" is about the LAST look there, and a
+    search by words would rank the best-matching look that way first.
 
     A question that named nothing in particular — "what did you see today?"
     — finds nothing here: recall_text drops a frame that scores no better than
     an empty one. That is what sends a `seen` question to the day's frames
     (_answer_tool). Nothing falls back to the nearest picture: SigLIP returns
-    one whatever it scored — "What did you see?" scored 0.107 on a frame of
-    the presenter, over its 0.09 gate — and on a laptop run's 19 frames it
+    one whatever it scored — measured on the robot's frames, "What did you
+    see?" scored 0.107 on a frame of the presenter, over its 0.09 gate — and
+    on a laptop run's 19 frames it
     scored "a plant" 0.061 and "something green" 0.034, under that gate, with
     a plant on the windowsill. A gate on it cannot tell the day from a thing.
 
@@ -480,8 +481,8 @@ def who(*, people=None, frame=None, frame_memory=None,
 
 
 def _shown(frames: list[dict]) -> list[dict]:
-    """Frames for the projector. Every one cleared its gate (recall_text),
-    so none is shown as a guess."""
+    """Frames for the projector: those whose words answered (recall_text) and
+    the day's. None is a guess, so none is dimmed."""
     return [{**frame, "weak": False} for frame in frames]
 
 
@@ -705,7 +706,9 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
     # `seen` for 26, `anything` for 2 ("what did you notice this morning?",
     # "what have you been watching?") and `taught` for 1; marked `anything`,
     # such a question finds no frame by its words and is answered from the
-    # conversation. Told so and asked which half it meant, the model never
+    # conversation — or, with nothing in it, by a bare sighting ("I saw Sasha
+    # moments ago") or the nothing note. Told so and asked which half it
+    # meant, the model never
     # called again (0 of 9) — so whatever it put there is what is answered:
     # the words of the question never change it.
     # The tool's older name `recall_seen` says it as plainly as `about` does.
@@ -750,17 +753,13 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
                 image_note=memory_note(turned[0], now)), True
     frames: list[dict] = []
     if about == SEEN and direction not in TURNED:
-        # The frames whose words hold what was asked about (recall_seen).
-        unsearchable = None
+        # The frames whose words hold what was asked about (recall_seen). A
+        # search that failed raises, and the model is told its memory could
+        # not be searched: the day in its place would answer "did you see
+        # Sasha?" with "I did not see Sasha" — the denial MemoryUnavailable
+        # exists to prevent.
         if recall_seen_fn is not None:
-            try:
-                frames = recall_seen_fn(query)
-            except MemoryUnavailable as exc:
-                # The words could not be searched (bge unreachable): the day
-                # needs no words, and it was the answer here before the words
-                # were searched first.
-                print(f"  [recall] frames' words skipped ({exc}); the day instead")
-                unsearchable = exc
+            frames = recall_seen_fn(query)
         if not frames:
             # Seen, and no frame's words hold anything the question asked
             # about: it named nothing — "what did you see today?" — or a thing
@@ -777,8 +776,6 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
                 return encode_chat_request(
                     history, heard,
                     image_jpeg=[base64.b64decode(frame["jpeg_b64"]) for frame in day]), True
-            if unsearchable is not None:
-                raise unsearchable
 
     facts = knowledge_fn(query) if knowledge_fn is not None else []
     if about == TAUGHT and not facts:
@@ -942,8 +939,9 @@ MEMORY_OFF_NOTE = ("Your memory is off right now. Say so plainly — never that 
 # gets both: NOTHING_IN_MEMORY_NOTE + GENERAL_TOO.
 GENERAL_QUESTION_NOTE = ("A general question, not a memory: answer it from your "
                          "own knowledge, in one or two sentences.")
-# For a `seen` or `said` question memory has nothing on, and the first half
-# of the note for an `anything` one.
+# For a `seen` or `said` question memory has nothing on, for a side asked
+# about with no look that way, and the first half of the note for an
+# `anything` one.
 NOTHING_IN_MEMORY_NOTE = "Nothing in your memory about this."
 # What follows the note for an `anything` question nothing answers. Measured
 # in fresh chats on questions the model marked `anything`: with
@@ -952,8 +950,8 @@ NOTHING_IN_MEMORY_NOTE = "Nothing in your memory about this."
 # anything?" got "I remember a lot of things" under every note); with
 # GENERAL_QUESTION_NOTE alone it made up a day for 2 of the 4 — "I've been
 # busy helping people". After MEMORY_OFF_NOTE the model never said its memory
-# was off, with this or without it (0 of 4 each); this still answers the
-# general ones there.
+# was off, with this or without it (0 of 4 each); with this, it still
+# answered the 3 general questions of 3.
 GENERAL_TOO = (" If it is a general question, not one about the past, answer it "
                "from your own knowledge, in one or two sentences.")
 

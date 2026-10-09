@@ -1123,6 +1123,22 @@ def test_a_look_that_answers_keeps_the_latest_exchanges_out():
     assert "you_talked_about" not in result
 
 
+
+def test_a_question_naming_nothing_that_memory_answers_keeps_the_latest_exchanges_out():
+    # "What did we talk about?" names nothing; when an exchange still answers
+    # it, that is the answer — the latest exchanges no longer come along just
+    # because the question named nothing.
+    told = "Sasha: my sister is called Anna — Reachy: lovely"
+    found = Recalled(memories=[told],
+                     speech_hits=[{"text": told, "score": 0.7, "source": "qdrant"}],
+                     recent=["Sasha: hi — Reachy: hello"])
+    brain = _Brain(_call("remember", "what did we talk about?", about="said"),
+                   {"reply": "Your sister Anna.", "token_count": 1})
+    _turn("What did we talk about?", brain, recall_fn=lambda query: found,
+          recall_seen_fn=lambda query, direction=None: pytest.fail("no frames"))
+    assert brain.requests[1].tool_result["result"] == {"the_person_told_you_before": [told]}
+
+
 def test_an_undescribed_frame_comes_back_as_a_picture():
     frame = _frame(0.4, ts=900.0)
     brain = _Brain(_call("remember", "the mug"), {"reply": "I saw a mug.", "token_count": None})
@@ -1179,7 +1195,9 @@ def test_nothing_at_all_brings_back_the_latest_conversation():
 # branch on its own, and everything behind it — the conversation, the looks —
 # never reached the model: "what did we talk about today?" came back "We
 # talked about Sasha and what you were curious about", "what did you see
-# today?" came back "I saw Sasha moments ago".
+# today?" came back "I saw Sasha moments ago". A sighting is the answer only
+# when nothing else is — which, for a question about what was seen that the
+# model marks `anything`, it can still be (see the test that records it).
 
 
 def test_a_sighting_does_not_hide_the_conversation_it_was_asked_about():
@@ -1419,6 +1437,25 @@ def test_an_anything_question_that_names_nothing_is_answered_from_the_conversati
         "you_talked_about": ["Sasha: hi — Reachy: hello"]}
 
 
+
+def test_an_anything_question_about_what_was_seen_with_nothing_else_is_the_sighting():
+    """Recorded, not wanted: marked `anything`, with an empty conversation,
+    "what did you see today?" is answered with the bare sighting — "I saw
+    Sasha moments ago" — because no frame's words hold it, `anything` never
+    gets the day, and a sighting is the answer when nothing else is (the
+    same rule "who did you see today?" needs). Measured, 2 of 29 questions
+    about what was seen come as `anything`."""
+    frames = _Frames([_frame(0.9)], looks=[_look("right", 940.0, "I see a door.")])
+    brain = _Brain(_call("remember", "what did you see today?"),
+                   {"reply": "I saw Sasha moments ago.", "token_count": 1})
+    _turn("What did you see today?", brain, clock=lambda: 1000.0,
+          recall_fn=lambda query: Recalled([], []),
+          recall_seen_fn=lambda query, direction=None: recall_seen(query, frame_memory=frames),
+          day_frames_fn=lambda: pytest.fail("`anything` never gets the day"),
+          who_fn=lambda: {"seen_earlier": ["Sasha, moments ago"]})
+    assert brain.requests[1].tool_result["result"] == {"people_you_saw": ["Sasha, moments ago"]}
+
+
 def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
     """Live: "tell me how does your memory work?" came as
     `anything`, the fact answered at 0.74 — and the latest looks came along
@@ -1632,25 +1669,21 @@ def test_a_seen_question_about_a_thing_no_frame_holds_gets_the_day():
         assert brain.requests[1].tool_result is None, question
 
 
-def test_when_the_words_cannot_be_searched_the_day_still_answers():
-    """The day needs no words: with bge unreachable, "what did you see
-    today?" still gets the pictures — it did before the words were searched
-    first. With no day either, the memory is said to be unavailable."""
+def test_when_the_words_cannot_be_searched_the_memory_is_said_to_be_unavailable():
+    """With bge unreachable the frames' words cannot be searched, and the
+    model is told so — not handed the day: against the day, "did you see
+    Sasha?" came back "I did not see Sasha" (measured), the denial
+    MemoryUnavailable exists to prevent. The day is not even read."""
     from demo.conversation import MEMORY_UNAVAILABLE_NOTE
 
     def down(query, direction=None):
         raise MemoryUnavailable("frames: OSError: embed service down")
 
-    day = [_frame(0.0, ts=900.0)]
-    brain = _Brain(_call("remember", "what did you see today?", about="seen"),
-                   {"reply": "I saw a chair.", "token_count": 1})
-    _turn("What did you see today?", brain, clock=lambda: 1000.0,
-          recall_seen_fn=down, day_frames_fn=lambda: day)
-    assert brain.requests[1].image_jpegs == (b"FRAME",)
-    brain = _Brain(_call("remember", "what did you see today?", about="seen"),
+    brain = _Brain(_call("remember", "Did you see Sasha?", about="seen"),
                    {"reply": "I can't search my memory.", "token_count": 1})
-    _turn("What did you see today?", brain, clock=lambda: 1000.0,
-          recall_seen_fn=down, day_frames_fn=lambda: [])
+    _turn("Did you see Sasha?", brain, clock=lambda: 1000.0,
+          recall_seen_fn=down, day_frames_fn=lambda: pytest.fail("not the day"))
+    assert brain.requests[1].image_jpegs == ()
     assert MEMORY_UNAVAILABLE_NOTE in str(brain.requests[1].tool_result["result"])
 
 
@@ -1679,14 +1712,21 @@ def test_a_said_question_never_touches_the_frames():
 
 
 def test_a_side_asked_about_as_anything_with_no_look_that_way_is_nothing():
+    # Only that side is searched — never the frames' words without it.
     from demo.conversation import NOTHING_IN_MEMORY_NOTE
+
+    asked = []
+
+    def recall_seen_fn(query, direction=None):
+        asked.append(direction)
+        return []
 
     brain = _Brain(_call("remember", "what was there", direction="left"),
                    {"reply": "I did not look there.", "token_count": 1})
     _turn("What was on your left?", brain, clock=lambda: 1000.0,
-          recall_fn=lambda query: Recalled([], []),
-          recall_seen_fn=lambda query, direction=None: [],
+          recall_fn=lambda query: Recalled([], []), recall_seen_fn=recall_seen_fn,
           day_frames_fn=lambda: pytest.fail("not the day"))
+    assert asked == ["left"]
     assert brain.requests[1].tool_result["result"] == {"note": NOTHING_IN_MEMORY_NOTE}
 
 

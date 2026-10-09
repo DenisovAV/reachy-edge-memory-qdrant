@@ -1,7 +1,8 @@
 """What the robot saw: frames, as SigLIP 2 embeddings in its Qdrant Edge shard.
 
 The robot stores the frames it sees and can be asked, by voice, what it saw.
-Every frame carries two vectors. `image` is SigLIP's embedding of the picture:
+Every frame carries an `image` vector, and a `text` one when it has words.
+`image` is SigLIP's embedding of the picture:
 what the day's frames are picked by (day_frames — the most different ones),
 and what the picture search (recall) matches a text query against in the same
 space. `text` is bge over the frame's own words — labels, names, the side it
@@ -12,10 +13,12 @@ nothing, by the day (demo/conversation.py).
 
 Torch-free: the onnx-community SigLIP2-base ONNX (vision + text) on the
 onnxruntime CPU EP, with the Hugging Face fast tokenizer. Measured on the
-laptop: ~36 ms per frame, ~10 ms per query; absent things top out around
-0.05-0.07 cosine while present ones sit around 0.10-0.15 — hence
-RECALL_MIN_SCORE, the gate that stops the robot "recalling" something it
-never saw.
+laptop: ~36 ms per frame, ~10 ms per query; on an early eval set absent
+things topped out around 0.05-0.07 cosine and present ones sat around
+0.10-0.15 — hence RECALL_MIN_SCORE, the gate on recall. On a laptop run's
+frames it did not hold ("a plant" 0.061 with a plant in view, "what did you
+see today?" 0.106), and the demo no longer asks recall (demo/conversation.py's
+recall_seen).
 
 The frames live in the `memory` shard beside the conversation
 (emulator/memory.py), told apart by `kind`; the JPEG travels in the payload,

@@ -1364,8 +1364,8 @@ def _recall_frames(monkeypatch, hits, day=(), **kwargs):
     display = _turn(monkeypatch, "did you see the bottle?",
                     _tool("remember", query="the bottle", about="seen"),
                     _said("ok"), frame_memory=_FakeFrameMemory(hits, day), **kwargs)
-    # `weak` is how the projector dims an unconfident match; these tests are
-    # about WHICH frames come back, so compare without it.
+    # `weak` is the projector's flag for a dimmed match (never set now that
+    # nothing guesses); these tests are about WHICH frames come back.
     return [{key: value for key, value in frame.items() if key != "weak"}
             for frame in display.recalls[-1]]
 
