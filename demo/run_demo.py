@@ -423,16 +423,15 @@ def _say(text, endpoint, robot, display, *, make_player=None, robot_guard=None,
     return True
 
 
-# What the speech recogniser makes of room noise and near-silence, seen live
-# on the robot ("You", "Thanks for watching!", "♪♪"). A turn built on one of
-# them answers a question nobody asked — and, now that the conversation is
-# kept, would sit in the model's context as if it had been said.
-_ASR_NOISE = frozenset({"you", "thanks for watching"})
-
-
-def _is_asr_noise(heard: str) -> bool:
-    words = re.sub(r"[^a-z' ]+", " ", heard.lower()).split()
-    return bool(heard.strip()) and (not words or " ".join(words) in _ASR_NOISE)
+# A transcript with no word in it ("♪♪", what a recogniser writes for music)
+# is nothing anyone said. A turn built on one answers a question nobody asked
+# — and, with the conversation kept, would sit in the model's context as if
+# it had been said. Noise itself is turned away before it is a transcript, by
+# what the recognisers can tell about the audio (a speech detector in front
+# of either, Whisper's own no-speech estimate), not by a list of what it
+# tends to come out as: "You", "Thanks for watching!".
+def _holds_no_words(heard: str) -> bool:
+    return bool(heard.strip()) and not re.search(r"[A-Za-z]", heard)
 
 
 def _handle_stream(detections, audio, endpoint, robot, display,
@@ -479,8 +478,8 @@ def _handle_stream(detections, audio, endpoint, robot, display,
         display.on_recall([])
         display.on_speech_recall([])
         return
-    if _is_asr_noise(heard):
-        print(f"  [asr] ignoring {heard!r} — noise, not speech")
+    if _holds_no_words(heard):
+        print(f"  [asr] ignoring {heard!r} — no words in it")
         heard = ""
     display.on_heard(heard)
     # Who is in front of the robot: one face lookup for this turn, before the

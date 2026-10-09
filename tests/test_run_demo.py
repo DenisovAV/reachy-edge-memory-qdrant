@@ -1474,17 +1474,21 @@ def test_handle_stream_moves_old_exchanges_into_speech_memory_over_budget(monkey
     assert window.history == [("I'm giving a talk.", "Exciting!"), ("Can you nod?", "Sure!")]
 
 
-@pytest.mark.parametrize("heard", ["You", "you.", "Thanks for watching!", "♪♪", " ♪ "])
-def test_handle_stream_ignores_what_the_recogniser_makes_of_noise(monkeypatch, heard):
+@pytest.mark.parametrize("heard", ["♪♪", " ♪ ", "..."])
+def test_handle_stream_ignores_a_transcript_with_no_words(monkeypatch, heard):
     display = _turn(monkeypatch, heard)  # _no_generate_http_stream: no chat call
     assert display.heard == [""]
 
 
-@pytest.mark.parametrize("heard", ["Thank you.", "You look happy!", "", "What do you see?"])
-def test_real_speech_is_not_mistaken_for_noise(heard):
-    from demo.run_demo import _is_asr_noise
+@pytest.mark.parametrize("heard", ["You", "Thanks for watching!", "Thank you.",
+                                   "You look happy!", "", "What do you see?"])
+def test_words_are_never_judged_to_be_noise_by_what_they_say(heard):
+    # Noise is turned away before it is a transcript, by what the recognisers
+    # can tell about the audio (emulator/speech_detector.py, whisper_asr.py's
+    # NO_SPEECH_MAX); no list of words decides it here.
+    from demo.run_demo import _holds_no_words
 
-    assert not _is_asr_noise(heard)
+    assert not _holds_no_words(heard)
 
 
 def test_parse_args_context_budget_default_and_override():

@@ -186,6 +186,16 @@ def test_tokenizer_joins_sentencepiece_marks(tmp_path: Path):
     assert MoonshineTokenizer(path).decode([10, 11, 12]) == "ever trieding"
 
 
+def test_tokenizer_puts_byte_fallback_tokens_back_together(tmp_path: Path):
+    # "♪" is three UTF-8 bytes, one token each; spelled out, the robot heard
+    # "<0xE2><0x99><0xAA>" — letters, so nothing took it for noise.
+    path = tmp_path / "tok.json"
+    write_vocab(path, {"<0xE2>": 20, "<0x99>": 21, "<0xAA>": 22, "▁Hi": 23})
+    tok = MoonshineTokenizer(path)
+    assert tok.decode([20, 21, 22, 20, 21, 22]) == "♪♪"
+    assert tok.decode([23, 20, 21, 22]) == "Hi♪"
+
+
 def test_tokenizer_ignores_unknown_ids(tmp_path: Path):
     path = tmp_path / "tok.json"
     write_vocab(path, {"yes": 7})
@@ -257,6 +267,7 @@ def test_an_utterance_longer_than_the_window_is_heard_to_the_end():
 
     heard = []
     recognizer = object.__new__(Recognizer)
+    recognizer._speech = None
     recognizer._transcribe_window = lambda pcm: heard.append(len(pcm)) or f"part{len(heard)}"
     text = recognizer.transcribe(np.zeros(WINDOW_SAMPLES + 40000, np.float32))
     assert heard == [WINDOW_SAMPLES, 40000]
@@ -270,6 +281,33 @@ def test_a_trailing_scrap_of_silence_is_not_transcribed():
 
     heard = []
     recognizer = object.__new__(Recognizer)
+    recognizer._speech = None
     recognizer._transcribe_window = lambda pcm: heard.append(len(pcm)) or "words"
     recognizer.transcribe(np.zeros(WINDOW_SAMPLES + 3000, np.float32))
     assert heard == [WINDOW_SAMPLES]
+
+
+class _Detector:
+    def __init__(self, speech):
+        self.speech = speech
+        self.heard = []
+
+    def holds_speech(self, pcm):
+        self.heard.append(len(pcm))
+        return self.speech
+
+
+def test_an_utterance_with_no_speech_in_it_is_never_decoded():
+    # moonshine wrote something for every one of 63 noise clips — "You" for
+    # 45 — as sure of it as of a word; the speech detector decides instead.
+    from emulator.asr import Recognizer
+
+    decoded = []
+    recognizer = object.__new__(Recognizer)
+    recognizer._speech = _Detector(False)
+    recognizer._transcribe_window = lambda pcm: decoded.append(len(pcm)) or "You"
+    assert recognizer.transcribe(np.zeros(16000, np.float32)) == ""
+    assert decoded == [] and recognizer._speech.heard == [16000]
+
+    recognizer._speech = _Detector(True)
+    assert recognizer.transcribe(np.zeros(16000, np.float32)) == "You"

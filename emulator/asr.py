@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,11 @@ MIN_TAIL_SAMPLES = 8000       # half a second
 MAX_DECODE_TOKENS = 64
 BOS_TOKEN = 1                 # `<s>` in the vocab; zero is `<unk>`
 MASK_BLOCKED = -1e9           # mask is additive, not multiplicative
+
+# SentencePiece's byte fallback: a character outside the vocab comes as its
+# UTF-8 bytes, one token each. "♪" is three of them, and before they were
+# put back together the robot heard "<0xE2><0x99><0xAA>".
+_BYTE_TOKEN = re.compile(r"<0x([0-9A-Fa-f]{2})>")
 
 
 def prepare_window(pcm: np.ndarray) -> np.ndarray:
@@ -138,6 +144,7 @@ class MoonshineTokenizer:
     def decode(self, ids: list[int]) -> str:
         pieces: list[str] = []
         unknown: list[int] = []
+        raw = bytearray()      # byte-fallback tokens not yet put together
         for token_id in ids:
             token = self._by_id.get(int(token_id))
             if token is None:
@@ -147,7 +154,16 @@ class MoonshineTokenizer:
                 break          # what follows is garbage from the unrun buffer
             if token in self.SPECIAL:
                 continue
+            byte = _BYTE_TOKEN.fullmatch(token)
+            if byte:
+                raw.append(int(byte.group(1), 16))
+                continue
+            if raw:
+                pieces.append(raw.decode("utf-8", errors="replace"))
+                raw.clear()
             pieces.append(token)
+        if raw:
+            pieces.append(raw.decode("utf-8", errors="replace"))
         if unknown:
             # An unknown id being silently dropped would mask a vocab/model
             # mismatch. Log both the count and the ids themselves so this
@@ -164,7 +180,10 @@ class MoonshineTokenizer:
 
 class Recognizer:
     def __init__(self, model_path: Path, tokenizer: MoonshineTokenizer,
-                 threads: int = 4) -> None:
+                 threads: int = 4, speech=None) -> None:
+        """`speech` (emulator/speech_detector.py's SpeechDetector) says
+        whether the utterance holds speech at all; without one, everything
+        is transcribed."""
         # CompiledModel is the current LiteRT API (Interpreter is deprecated),
         # but a CPU without the ARMv8 crypto extensions (the robot's CM4)
         # cannot build one at all, so the runner is chosen for the board
@@ -177,13 +196,20 @@ class Recognizer:
         self._tokenizer = tokenizer
         self._keys = classify_decode_inputs(self._decode.get_input_details())
         self._runner = runner
+        self._speech = speech
 
     def transcribe(self, pcm: np.ndarray) -> str:
         """Text for any length of audio. The model hears exactly 5 s; a
         longer utterance (the voice loop takes up to 8 s) is heard window by
         window rather than cut off at 5 s. A last piece under half a second
-        is the silence the voice gate waits for, not words."""
+        is the silence the voice gate waits for, not words.
+
+        Nothing for an utterance with no speech in it: this model writes
+        something for any noise ("You", for most), as sure of it as of a
+        word (see emulator/speech_detector.py)."""
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
+        if self._speech is not None and not self._speech.holds_speech(pcm):
+            return ""
         pieces = [pcm[start:start + WINDOW_SAMPLES]
                   for start in range(0, max(len(pcm), 1), WINDOW_SAMPLES)]
         if len(pieces) > 1 and len(pieces[-1]) < MIN_TAIL_SAMPLES:
