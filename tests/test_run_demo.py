@@ -1480,7 +1480,7 @@ def test_handle_stream_ignores_a_transcript_with_no_words(monkeypatch, heard):
     assert display.heard == [""]
 
 
-@pytest.mark.parametrize("heard", ["You", "Thanks for watching!", "Thank you.",
+@pytest.mark.parametrize("heard", ["You", "Thanks for watching!", "Thank you.", "42.",
                                    "You look happy!", "", "What do you see?"])
 def test_words_are_never_judged_to_be_noise_by_what_they_say(heard):
     # Noise is turned away before it is a transcript, by what the recognisers

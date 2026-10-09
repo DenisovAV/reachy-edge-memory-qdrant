@@ -8,11 +8,11 @@ only when the model calls `remember`. This is a different question, asked at a
 different time: not "what do I remember about this" but "who is standing
 there", and the answer is needed before the turn is answered, not during it.
 
-Meeting someone is a two-turn exchange the robot drives itself, without the
-language model: it asks for a name, the next thing said is taken as the
-answer — the model on the laptop reads the name out of it (demo/serve.py's
-/name) — and the shots it has collected are enrolled under that name. Keeping
-the model out of it is deliberate — these two lines must be the same every
+Meeting someone is a two-turn exchange the robot drives itself: it asks for a
+name, the next thing said is taken as the answer — the model on the laptop
+reads the name out of it (demo/serve.py's /name) — and the shots it has
+collected are enrolled under that name. The robot's two lines are fixed, not
+generated, and no tool call is involved: these lines must be the same every
 time, and a tool call that misfires here would greet the room with silence.
 
 Calibrated on this robot's own camera (eight stored frames of one person):
@@ -319,15 +319,18 @@ class People:
         attached to a face outlives the mistake.
 
         `read_name` (demo/run_demo.py, the laptop's /name) asks the model
-        what the name was. A model that cannot be asked made nothing out:
-        no pattern over the words stands in for it — the one that did took
-        "What's yours?" for a name."""
+        what the name was. A model that cannot be asked made nothing out,
+        and no pattern over the words stands in for it."""
         self.awaiting_name = False
         name = None
         if self._read_name is not None:
             try:
                 name = self._read_name(heard)
-            except Exception as exc:  # noqa: BLE001 — not caught, said so
+            except (OSError, ValueError, AttributeError) as exc:
+                # The laptop could not be asked, or answered nonsense: not
+                # caught, said so. A bug in the reader is not this — it
+                # reaches the turn's own handler with its traceback. Why no
+                # pattern stands in: demo/serve.py's NAME_SYSTEM.
                 print(f"  [people] the name reader failed "
                       f"({type(exc).__name__}: {exc})")
         if not name:

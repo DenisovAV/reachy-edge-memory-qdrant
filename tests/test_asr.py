@@ -299,7 +299,7 @@ class _Detector:
 
 def test_an_utterance_with_no_speech_in_it_is_never_decoded():
     # moonshine wrote something for every one of 63 noise clips — "You" for
-    # 45 — as sure of it as of a word; the speech detector decides instead.
+    # 45 — no less sure of it than of real words; the speech detector decides.
     from emulator.asr import Recognizer
 
     decoded = []

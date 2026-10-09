@@ -148,7 +148,7 @@ class ConversationWindow:
 
     def set_speaker(self, name: str) -> None:
         """The person the robot is talking to, from a face it recognised
-        (demo/people.py), which beats guessing from the words.
+        (demo/people.py).
 
         What was said before anyone was recognised is theirs too: the person
         was talking before the camera knew them. What a stranger said is not,
@@ -319,8 +319,8 @@ def recall_seen(query: str, *, frame_memory=None,
     asked about — labels, names, the side it looked, the caption
     (emulator/frame_memory.py's recall_text) — best first. A question about a
     thing is a question in words: measured on the robot's own 371 frames,
-    that search finds 32 right frames of 36 where the picture search (SigLIP)
-    finds 8.
+    that search finds 32 right frames of 36 where a SigLIP text-to-image
+    search (since removed) found 8.
 
     direction ("left"/"right") gives the last frame taken with the head turned
     that way: "what was on your left?" is about the LAST look there, and a
@@ -329,12 +329,9 @@ def recall_seen(query: str, *, frame_memory=None,
     A question that named nothing in particular — "what did you see today?"
     — finds nothing here: recall_text drops a frame that scores no better than
     an empty one. That is what sends a `seen` question to the day's frames
-    (_answer_tool). Nothing falls back to the nearest picture: SigLIP returns
-    one whatever it scored — measured on the robot's frames, "What did you
-    see?" scored 0.107 on a frame of the presenter, over its 0.09 gate — and
-    on a laptop run's 19 frames it
-    scored "a plant" 0.061 and "something green" 0.034, under that gate, with
-    a plant on the windowsill. A gate on it cannot tell the day from a thing.
+    (_answer_tool). Nothing falls back to the nearest picture: no gate on the
+    picture search told the day from a thing, and it is gone
+    (emulator/frame_memory.py's docstring has the numbers).
 
     turn_started_at drops frames stored during this very turn — the scene
     writer stores one the moment a new object lands in view, often while the

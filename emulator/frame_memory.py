@@ -200,10 +200,9 @@ class FrameMemory:
     (below) drives `remember()` off the detect thread while the voice
     thread's turn handler alternates reads (`recall_text()`, `day_frames()`)
     with `remember()` (see
-    demo/run_demo.py's `_handle_stream`). Neither the Qdrant Edge shard
-    nor `self._next_id` synchronises itself — a plain read-modify-write racing
-    the on-disk collection's own non-atomic payload/vector mutation — so
-    `_lock` below serialises every Qdrant client call. The embedding
+    demo/run_demo.py's `_handle_stream`). The Qdrant Edge shard does not
+    synchronise itself — the on-disk collection's payload/vector mutation is
+    not atomic — so `_lock` below serialises every Qdrant client call. The embedding
     (`embed_image`, bge) and jpeg encoding stay OUTSIDE the lock: they
     touch no shared state, and holding the lock through a SigLIP inference
     would stall the OTHER thread's Qdrant call on model compute for nothing.
@@ -212,9 +211,9 @@ class FrameMemory:
     def __init__(self, path: str | None = None, *, embedder: "Embedder | None" = None,
                  repo: str = MODEL_REPO, store=None, text_embedder=None) -> None:
         """`store` is a shared EdgeStore with an `image` vector (and a `text`
-        one for captions) — the robot's `memory` shard, shared with the
-        conversation. `text_embedder` (bge, the fastembed shape) gives a
-        described frame its `text` vector."""
+        one for the frame's words) — the robot's `memory` shard, shared with
+        the conversation. `text_embedder` (bge, the fastembed shape) gives
+        every frame with words its `text` vector."""
         from emulator.edge_store import IMAGE, KIND, TEXT, EdgeStore
 
         self._embedder = embedder if embedder is not None else _embedder(repo)
@@ -290,7 +289,7 @@ class FrameMemory:
         vector = self._embedder.embed_image(frame_rgb)
         payload = {
             "detections": detections,
-            # a flat label list for MatchAny filtering (YOLO as metadata)
+            # a flat label list (YOLO as metadata): frame_text's words
             "labels": sorted({d["label"] for d in detections if d.get("label")}),
             "jpeg_b64": _encode_jpeg(frame_rgb),
             "ts": time.time(),
@@ -310,10 +309,8 @@ class FrameMemory:
         if text_vector is not None:
             vectors[TEXT_VECTOR] = text_vector
         with self._lock:
-            # id allocation + upsert must be one atomic step: two threads
-            # each reading `_next_id` before either increments it would
-            # upsert the SAME id, silently overwriting one frame with the
-            # other instead of storing both.
+            # id allocation + upsert as one step under the lock, like every
+            # other call into the shard (see the class docstring).
             point_id = self._store.new_id()
             self._store.add(point_id, vectors, payload)
         return point_id

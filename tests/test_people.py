@@ -511,7 +511,7 @@ def test_the_models_no_name_is_an_answer_not_a_reason_to_guess():
     people = People(memory, _Reader(), read_name=lambda heard: None)
     people.observe(FRAME)
     people.ask_name()
-    assert people.answer_name("I'm Sasha, what's yours?") == (None, NOT_CAUGHT)
+    assert people.answer_name("What's yours?") == (None, NOT_CAUGHT)
     assert memory.enrolled == []
 
 
@@ -528,6 +528,19 @@ def test_a_name_the_model_cannot_be_asked_about_is_not_caught():
     assert people.answer_name("I'm Sasha.") == (None, NOT_CAUGHT)
     assert memory.enrolled == []
     assert people.should_ask_name()
+
+
+def test_a_bug_in_the_name_reader_is_not_taken_for_a_name_not_caught():
+    # Only the laptop not answering is "not caught"; a bug reaches the turn's
+    # handler with its traceback instead of hiding behind the same line.
+    def broken(heard):
+        raise TypeError("a bug")
+
+    people = People(_Memory(_Match(None, 0.05)), _Reader(), read_name=broken)
+    people.observe(FRAME)
+    people.ask_name()
+    with pytest.raises(TypeError):
+        people.answer_name("Sasha")
 
 
 def test_a_pose_is_learned_under_the_name_it_was_judged_by():

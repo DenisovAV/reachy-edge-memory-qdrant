@@ -15,8 +15,8 @@ faster-whisper installed can still run everything else.
 
 `vad_filter` matters as much as the model: Whisper invents speech in silence
 ("Thank you.", "Thanks for watching!") and the filter drops those windows
-before they reach the decoder. What gets past it, the decoder itself says
-holds no speech (NO_SPEECH_MAX).
+before they reach the decoder. Noise that gets past it (one clip of 63,
+measured) the decoder itself says holds no speech (NO_SPEECH_MAX).
 """
 from __future__ import annotations
 
@@ -60,11 +60,11 @@ HOTWORDS = "Qdrant, Qdrant Edge, Reachy"
 # estimate is over 0.6 AND its words came out unsure (log-probability under
 # -1.0), and Whisper is sure of what it invents. Measured with the VAD off, so
 # that nothing filtered the noise first: on 63 noise clips (white, pink, hum,
-# motor whir, clicks, breath, tones) every segment Whisper wrote — the hotword
-# list, all of them: "Reachy", "Qdrant Edge, Reachy" — said 0.385 or more; on
-# 288 utterances (24 phrases, six voices, clean and under noise), 0.139 at
-# most. With the VAD on, as here, one noise clip of the 63 got through it, as
-# "Qdrant Edge, Reachy" at 0.65.
+# motor whir, clicks, breath, tones) every segment Whisper wrote — each one an
+# echo of the hotwords: "Reachy", "Qdrant Edge, Reachy", "Edge, Reachy" — said
+# 0.385 or more; on 288 utterances (24 phrases, six voices, clean and under
+# noise), 0.139 at most. 0.25 sits between the two. With the VAD on, as here,
+# one noise clip of the 63 got through it, as "Qdrant Edge, Reachy" at 0.65.
 NO_SPEECH_MAX = 0.25
 
 _WORDS = re.compile(r"[a-z]+")
@@ -88,9 +88,9 @@ def is_hotword_echo(text: str, hotwords: str = HOTWORDS) -> bool:
     no speech (NO_SPEECH_MAX drops it first); over speech it does not —
     measured, "How do you work?" in the robot's own voice came back as
     "Qdrant Edge, Reachy" with a no-speech estimate of 0.007, and its
-    words' probability without the prompt (0.001) is as low as a real
-    "Qdrant Edge" gets in a voice Whisper does not expect it from (0.000
-    and 0.008). The prompt is the only thing that tells them apart.
+    words' probabilities without the prompt (word alignment: 0.001, 0.000,
+    0.001) are as low as a real "Qdrant Edge" gets in the macOS Flo voice
+    (0.000, 0.008). The prompt is the only thing that tells them apart.
 
     An echo is a transcript made ENTIRELY of hotwords, carrying two or more
     of the listed entries. One entry is left alone: "Qdrant Edge" on its own
@@ -146,8 +146,14 @@ class WhisperRecognizer:
             # makes Whisper continue a sentence nobody said when a turn is
             # short, which is most of them here.
             condition_on_previous_text=False, hotwords=HOTWORDS)
-        text = " ".join(segment.text.strip() for segment in segments
-                        if segment.no_speech_prob < NO_SPEECH_MAX).strip()
+        kept = []
+        for segment in segments:
+            if segment.no_speech_prob < NO_SPEECH_MAX:
+                kept.append(segment.text.strip())
+            else:
+                print(f"  [asr] dropping {segment.text.strip()!r} — Whisper "
+                      f"says it holds no speech ({segment.no_speech_prob:.2f})")
+        text = " ".join(kept).strip()
         if is_hotword_echo(text):
             # Not "the person said Qdrant": the prompt came back. Dropped
             # here rather than downstream — nothing after this can tell the

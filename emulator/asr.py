@@ -43,10 +43,14 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from emulator.litert_runtime import build_runner
+
+if TYPE_CHECKING:
+    from emulator.speech_detector import SpeechDetector
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +184,8 @@ class MoonshineTokenizer:
 
 class Recognizer:
     def __init__(self, model_path: Path, tokenizer: MoonshineTokenizer,
-                 threads: int = 4, speech=None) -> None:
+                 threads: int = 4,
+                 speech: "SpeechDetector | None" = None) -> None:
         """`speech` (emulator/speech_detector.py's SpeechDetector) says
         whether the utterance holds speech at all; without one, everything
         is transcribed."""
@@ -205,10 +210,14 @@ class Recognizer:
         is the silence the voice gate waits for, not words.
 
         Nothing for an utterance with no speech in it: this model writes
-        something for any noise ("You", for most), as sure of it as of a
-        word (see emulator/speech_detector.py)."""
+        something for any noise ("You", for most), and its confidence in it
+        is no lower than in real words (see emulator/speech_detector.py)."""
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
         if self._speech is not None and not self._speech.holds_speech(pcm):
+            # Said, so a robot that stops hearing someone is not silent about
+            # why: a far microphone or a clipped one-word answer lands here too.
+            print(f"  [asr] no speech in {len(pcm) / 16000:.1f} s of sound — "
+                  "not transcribed")
             return ""
         pieces = [pcm[start:start + WINDOW_SAMPLES]
                   for start in range(0, max(len(pcm), 1), WINDOW_SAMPLES)]

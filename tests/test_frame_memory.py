@@ -371,8 +371,8 @@ class FakeWords:
 
 def test_a_stored_frame_carries_its_objects_and_its_people_and_is_found_by_them():
     """The objects and the names were always written into the point — and
-    for a long time nothing ever searched them: `must_labels` was never passed by
-    the demo, and the only text vector written was a look's caption (7 frames
+    for a long time nothing ever searched them: the old picture search's
+    label filter was never used by the demo, and the only text vector written was a look's caption (7 frames
     of the 371 on the robot). Stored is not indexed."""
     from emulator.frame_memory import SceneChangeWriter
 

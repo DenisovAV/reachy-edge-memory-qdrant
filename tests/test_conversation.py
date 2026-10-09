@@ -801,7 +801,7 @@ def test_a_question_about_a_thing_searches_the_frames_own_words_first():
     """Measured on the robot's 371 stored frames: "did you see a bottle?",
     "what was on the table?", "a plant in a pot" — the picture search found 8
     right frames of 36, searching the words the frame already carries found
-    32. The words go first; the picture is what answers when they find
+    32. The words go first; the day's frames answer when they find
     nothing."""
     bottle = _frame(0.8, ts=900.0)
     frames = _Frames(looks=[_look("left", 30.0, "I see a lamp.")],

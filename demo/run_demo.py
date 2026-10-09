@@ -423,15 +423,15 @@ def _say(text, endpoint, robot, display, *, make_player=None, robot_guard=None,
     return True
 
 
-# A transcript with no word in it ("♪♪", what a recogniser writes for music)
-# is nothing anyone said. A turn built on one answers a question nobody asked
+# A transcript with no letter or digit in it ("♪♪", what a recogniser writes
+# for music) is nothing anyone said. A turn built on one answers a question nobody asked
 # — and, with the conversation kept, would sit in the model's context as if
 # it had been said. Noise itself is turned away before it is a transcript, by
 # what the recognisers can tell about the audio (a speech detector in front
 # of either, Whisper's own no-speech estimate), not by a list of what it
 # tends to come out as: "You", "Thanks for watching!".
 def _holds_no_words(heard: str) -> bool:
-    return bool(heard.strip()) and not re.search(r"[A-Za-z]", heard)
+    return bool(heard.strip()) and not re.search(r"[A-Za-z0-9]", heard)
 
 
 def _handle_stream(detections, audio, endpoint, robot, display,
@@ -908,7 +908,8 @@ def build_transcriber(args):
     try:
         recognizer = build_recognizer("moonshine")
     except Exception as exc:  # noqa: BLE001 — named and re-raised below
-        raise placement.missing("asr", "moonshine-tiny and its tokenizer",
+        raise placement.missing("asr", "moonshine-tiny, its tokenizer and the "
+                                "Silero speech detector",
                                 f"{type(exc).__name__}: {exc}") from exc
     return lambda audio, sample_rate: recognizer.transcribe(audio)
 
@@ -1716,7 +1717,8 @@ def parse_args(argv=None):
                    help="the knowledge snapshot restored at start "
                         "(default: demo/qdrant_knowledge.snapshot)")
     p.add_argument("--no-memory", action="store_true",
-                   help="disable memory: SigLIP visual recall + bge speech recall")
+                   help="disable memory: frames (SigLIP; searched by their words) "
+                        "and the conversation (bge)")
     p.add_argument("--on-robot", default=None, metavar="LIST",
                    help="which models run ON THE ROBOT, comma-separated "
                         "(asr, tts, detector, faces, embedder); anything not "

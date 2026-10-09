@@ -73,3 +73,60 @@ def test_with_the_real_model_noise_and_silence_hold_no_speech():
     rng = np.random.default_rng(0)
     assert not detector.holds_speech(rng.normal(0, 0.02, 32000).astype(np.float32))
     assert not detector.holds_speech(np.zeros(32000, np.float32))
+
+
+def _spoken(text):
+    """`text` in a macOS voice, float32 at 16 kHz, or None off a Mac."""
+    import shutil
+    import subprocess
+    import tempfile
+    import wave
+    from pathlib import Path
+
+    if shutil.which("say") is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "said.wav"
+        subprocess.run(["say", "-o", str(path), "--data-format=LEI16@16000", text],
+                       check=True)
+        with wave.open(str(path)) as wav:
+            raw = wav.readframes(wav.getnframes())
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+@pytest.mark.skipif(_silero() is None or _spoken("Hi") is None,
+                    reason="Silero VAD is not cached, or no `say` here")
+def test_with_the_real_model_a_one_word_answer_holds_speech():
+    # The shortest utterances measured ("Thanks.", "Bye.") held 9 chunks of
+    # speech against the rule's 8: a bare name is that short.
+    from emulator.speech_detector import SpeechDetector
+
+    detector = SpeechDetector(_silero())
+    for word in ("Sasha.", "Yes.", "Thanks."):
+        audio = np.concatenate([np.zeros(4800, np.float32), _spoken(word),
+                                np.zeros(9600, np.float32)])
+        assert detector.holds_speech(audio), word
+
+
+def test_a_padded_last_chunk_counts_only_the_audio_it_holds():
+    # Eight chunks of speech reach 256 ms only if all of the last one is
+    # audio; padded, it is the audio's own length that counts.
+    assert holds_speech([0.9] * 8, length=8 * 512)
+    assert not holds_speech([0.9] * 8, length=7 * 512 + 300)
+
+
+def test_speech_that_ends_in_a_short_last_chunk_is_heard():
+    from emulator.speech_detector import SpeechDetector
+
+    seen = []
+
+    class _Session:
+        def run(self, _outputs, feed):
+            seen.append(feed["input"].shape)
+            return np.array([[0.9]], np.float32), feed["state"]
+
+    detector = object.__new__(SpeechDetector)
+    detector._session = _Session()
+    # 7 chunks and 450 samples: 252 ms, over the rule only with the last bit.
+    assert detector.holds_speech(np.ones(7 * 512 + 450, np.float32) * 0.1)
+    assert seen == [(1, 576)] * 8, "the short last chunk is padded, not dropped"
