@@ -132,25 +132,18 @@ def test_search_finds_in_context_exchanges_over_the_gate():
 
 class _Frames:
     """FrameMemory stand-in: `words` answer the frame-words search (filtered
-    by `before`, as the real recall_text is), `hits` the picture search —
-    which nothing in the conversation may call any more — `looks` are the
-    frames taken on request (newest first, as latest_looks returns them),
-    `day` the day's frames."""
+    by `before`, as the real recall_text is), `looks` are the frames taken on
+    request (newest first, as latest_looks returns them), `day` the day's
+    frames."""
 
-    def __init__(self, hits, looks=(), words=(), day=()):
-        self.hits = hits
+    def __init__(self, looks=(), words=(), day=()):
         self.looks = list(looks)
         self.words = list(words)
         self.day = list(day)
-        self.min_scores = []
         self.looks_asked = []
         self.word_queries = []
         self.word_befores = []
         self.day_befores = []
-
-    def recall(self, query, min_score=None):
-        self.min_scores.append(min_score)
-        return list(self.hits)
 
     def recall_text(self, query, k=3, before=None):
         self.word_queries.append(query)
@@ -168,14 +161,6 @@ class _Frames:
         return [look for look in self.looks
                 if (directions is None or look.get("looked") in directions)
                 and (before is None or look["ts"] < before)][:limit]
-
-
-
-
-
-
-
-
 
 
 # — one turn —
@@ -678,20 +663,18 @@ def test_the_model_is_told_the_memory_could_not_be_searched():
 
 
 def test_recall_seen_is_the_words_search_and_never_a_picture_guess():
-    """The picture search returns a frame whatever it scored — "What did you
-    see?" scored 0.107 on a frame of the presenter, over its gate — so
-    nothing in the conversation asks it any more."""
-    frames = _Frames([_frame(0.05)])
+    """A question that names nothing finds nothing: no nearest picture
+    stands in for an answer (the picture search that did — "What did you
+    see?" scored 0.107 on a frame of the presenter, over its gate — is gone)."""
+    frames = _Frames()
     assert recall_seen("what did you see?", frame_memory=frames) == []
-    assert frames.min_scores == [], "no picture search"
     lamp = _look("left", 30.0, "I see a lamp.")
-    frames = _Frames([_frame(0.05)], words=[lamp])
+    frames = _Frames(words=[lamp])
     assert recall_seen("was there a lamp?", frame_memory=frames) == [lamp]
-    assert frames.min_scores == []
 
 
 def test_recall_seen_drops_frames_stored_during_this_turn():
-    frames = _Frames([], words=[_frame(0.8, ts=50.0), _frame(0.7, ts=10.0)])
+    frames = _Frames(words=[_frame(0.8, ts=50.0), _frame(0.7, ts=10.0)])
     found = recall_seen("the mug", frame_memory=frames, turn_started_at=40.0)
     assert [frame["ts"] for frame in found] == [10.0]
     assert frames.word_befores == [40.0], "the turn's start goes to the search"
@@ -700,7 +683,7 @@ def test_recall_seen_drops_frames_stored_during_this_turn():
 def test_the_day_leaves_out_the_frames_stored_during_this_turn():
     # The newest frame is always the first of the day: without the turn's
     # start it would be the present, on the screen, as a memory.
-    frames = _Frames([], day=[_frame(0.0, ts=50.0), _frame(0.0, ts=10.0)])
+    frames = _Frames(day=[_frame(0.0, ts=50.0), _frame(0.0, ts=10.0)])
     assert [frame["ts"] for frame in day_frames(frame_memory=frames,
                                                 turn_started_at=40.0)] == [10.0]
     assert frames.day_befores == [40.0]
@@ -821,13 +804,13 @@ def _look(where, ts, caption=None):
 
 
 def test_recall_seen_by_direction_is_the_last_look_that_way_before_this_turn():
-    frames = _Frames([_frame(0.9)], looks=[_look("left", 50.0), _look("right", 40.0),
-                                            _look("left", 30.0)])
+    frames = _Frames(looks=[_look("left", 50.0), _look("right", 40.0),
+                            _look("left", 30.0)])
     found = recall_seen("what was on your left?", frame_memory=frames,
                         turn_started_at=45.0, direction="left")
     assert [frame["ts"] for frame in found] == [30.0]
     assert frames.looks_asked == [(["left"], 1, 45.0)]
-    assert frames.min_scores == [], "no search: the words say nothing SigLIP can match"
+    assert frames.word_queries == [], "no search: the side is the answer"
 
 
 def test_recall_seen_in_general_is_the_frames_whose_words_answer():
@@ -835,10 +818,10 @@ def test_recall_seen_in_general_is_the_frames_whose_words_answer():
     # back — not the latest looks, not the nearest picture — and that is what
     # sends a `seen` question to the day's frames (_answer_tool).
     looks = [_look("right", 40.0, "I see a door."), _look("left", 30.0, "I see a lamp.")]
-    frames = _Frames([_frame(0.9)], looks=looks)
+    frames = _Frames(looks=looks)
     assert recall_seen("what did you see?", frame_memory=frames) == []
-    assert frames.looks_asked == [] and frames.min_scores == []
-    frames = _Frames([_frame(0.9)], looks=looks, words=[looks[1]])
+    assert frames.looks_asked == []
+    frames = _Frames(looks=looks, words=[looks[1]])
     assert recall_seen("was there a lamp?", frame_memory=frames) == [looks[1]]
 
 
@@ -849,12 +832,12 @@ def test_a_question_about_a_thing_searches_the_frames_own_words_first():
     32. The words go first; the picture is what answers when they find
     nothing."""
     bottle = _frame(0.8, ts=900.0)
-    frames = _Frames([_frame(0.2)], looks=[_look("left", 30.0, "I see a lamp.")],
+    frames = _Frames(looks=[_look("left", 30.0, "I see a lamp.")],
                      words=[bottle])
     assert recall_seen("did you see a bottle?", frame_memory=frames) == [bottle]
     assert frames.word_queries == ["did you see a bottle?"]
-    # …and nothing else was asked: neither the looks nor the picture search.
-    assert frames.min_scores == [] and frames.looks_asked == []
+    # …and nothing else was asked: not the looks.
+    assert frames.looks_asked == []
 
 
 def test_a_look_line_keeps_the_first_sentence_without_i_see():
@@ -1318,7 +1301,7 @@ def test_a_question_about_the_person_asking_is_answered_from_the_faces():
                    {"reply": "Of course, Sasha.", "token_count": 1})
     _turn("Do you remember me?", brain, clock=lambda: 1000.0,
           recall_fn=lambda query: Recalled([], []),
-          recall_seen_fn=lambda query, direction=None: pytest.fail("nor a picture search"),
+          recall_seen_fn=lambda query, direction=None: pytest.fail("nor the frames' words"),
           day_frames_fn=lambda: pytest.fail("nor the day"),
           who_fn=lambda: {"in_front_of_you": ["Sasha"],
                           "you_met": ["Sasha, 2 hours ago"],
@@ -1405,15 +1388,14 @@ def test_a_non_visual_question_with_no_subject_never_grabs_a_random_frame():
     test_frame_memory.py), and there is no picture guess."""
     from demo.conversation import GENERAL_TOO, NOTHING_IN_MEMORY_NOTE
 
-    frames = _Frames([_look("ahead", 900.0, "I see a room with a red curtain.")],
-                     looks=[_look("ahead", 900.0, "I see a room with a red curtain.")])
+    frames = _Frames(looks=[_look("ahead", 900.0, "I see a room with a red curtain.")])
     brain = _Brain(_call("remember", "how do you work", about="anything"),
                    {"reply": "I am not sure.", "token_count": 1})
     _turn("How do you work?", brain, clock=lambda: 1000.0,
           recall_fn=lambda query: Recalled([], []),
           recall_seen_fn=lambda query, direction=None: recall_seen(query, frame_memory=frames))
     assert frames.word_queries == ["how do you work"]
-    assert frames.min_scores == [] and frames.looks_asked == []
+    assert frames.looks_asked == []
     assert brain.requests[1].tool_result["result"] == {
         "found": [], "note": NOTHING_IN_MEMORY_NOTE + GENERAL_TOO}
 
@@ -1425,7 +1407,7 @@ def test_an_anything_question_that_names_nothing_is_answered_from_the_conversati
     was seen came as `anything`; the word lists that once sent such a
     question to the latest looks are gone, and asked which half it meant,
     the model never said (demo/conversation.py's `about`)."""
-    frames = _Frames([_frame(0.9)], looks=[_look("right", 940.0, "I see a door.")])
+    frames = _Frames(looks=[_look("right", 940.0, "I see a door.")])
     found = Recalled([], [], recent=["Sasha: hi — Reachy: hello"])
     brain = _Brain(_call("remember", "anything"),
                    {"reply": "We said hello.", "token_count": 1})
@@ -1445,7 +1427,7 @@ def test_an_anything_question_about_what_was_seen_with_nothing_else_is_the_sight
     gets the day, and a sighting is the answer when nothing else is (the
     same rule "who did you see today?" needs). Measured, 2 of 29 questions
     about what was seen come as `anything`."""
-    frames = _Frames([_frame(0.9)], looks=[_look("right", 940.0, "I see a door.")])
+    frames = _Frames(looks=[_look("right", 940.0, "I see a door.")])
     brain = _Brain(_call("remember", "what did you see today?"),
                    {"reply": "I saw Sasha moments ago.", "token_count": 1})
     _turn("What did you see today?", brain, clock=lambda: 1000.0,
@@ -1464,7 +1446,7 @@ def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
     work" (real bge: test_frame_memory.py), and nothing falls back to the
     looks any more."""
     display = _Display()
-    frames = _Frames([_frame(0.9)], looks=[_look("left", 900.0, "I see a lamp.")])
+    frames = _Frames(looks=[_look("left", 900.0, "I see a lamp.")])
     brain = _Brain(_call("remember", "how does your memory work", about="anything"),
                    {"reply": "In Qdrant Edge shards.", "token_count": 1})
     _turn("Tell me how does your memory work?", brain, display=display,
@@ -1477,7 +1459,7 @@ def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
     result = brain.requests[1].tool_result["result"]
     assert result == {"facts_you_were_taught": ["My memory lives in Qdrant Edge shards."]}
     assert not [e for e in display.events if e[0] == "frames" and e[1]]
-    assert frames.min_scores == [] and frames.looks_asked == []
+    assert frames.looks_asked == []
 
 
 def test_about_anything_is_answered_as_anything_whatever_the_words():
@@ -1491,7 +1473,7 @@ def test_about_anything_is_answered_as_anything_whatever_the_words():
         asked.append(query)
         return []
 
-    frames = _Frames([_frame(0.9)])
+    frames = _Frames()
     found = Recalled([], [], recent=["Sasha: Look left. — Reachy: I see a curtain."])
     brain = _Brain(_call("remember", "how do you work", about="anything"),
                    {"reply": "I listen and remember.", "token_count": 1})
@@ -1499,7 +1481,7 @@ def test_about_anything_is_answered_as_anything_whatever_the_words():
           recall_fn=lambda query: found,
           recall_seen_fn=lambda query, direction=None: recall_seen(query, frame_memory=frames))
     assert asked == ["how do you work"]
-    assert frames.word_queries == ["how do you work"] and frames.min_scores == []
+    assert frames.word_queries == ["how do you work"]
     assert brain.requests[1].tool_result["result"] == {
         "you_talked_about": ["Sasha: Look left. — Reachy: I see a curtain."]}
 
@@ -1593,7 +1575,7 @@ def test_no_question_gets_a_picture_guess():
     words and then the day — and with no day either, nothing."""
     from demo.conversation import NOTHING_IN_MEMORY_NOTE
 
-    frames = _Frames([_frame(0.12)])
+    frames = _Frames()
     for about, question in (("anything", "Tell me about the universe."),
                             ("anything", "What was the thing I showed you?"),
                             ("seen", "Do you remember the bottle?")):
@@ -1605,7 +1587,6 @@ def test_no_question_gets_a_picture_guess():
               day_frames_fn=lambda: day_frames(frame_memory=frames))
         assert brain.requests[1].image_jpegs == (), question
         assert not [e for e in display.events if e[0] == "frames" and e[1]], question
-    assert frames.min_scores == []
     assert brain.requests[1].tool_result["result"] == {"note": NOTHING_IN_MEMORY_NOTE}
 
 
