@@ -254,13 +254,17 @@ def _fake_transcribe(heard: str, endpoints_seen: list[str] | None = None):
 
 class _FakeFrameMemory:
     """Stand-in for emulator.frame_memory.FrameMemory — records the query and
-    returns canned hits, without SigLIP/onnx. `calls` records recall/remember
-    in the order they actually happened, for the recall-before-store tests."""
+    returns canned frames, without SigLIP/onnx. `hits` answer the frames'
+    words search and `day` is the day's frames, each filtered by `before` as
+    the real ones are, so a test sees whether the turn's start reached them.
+    There is no picture search: nothing in the turn may ask for one. `calls`
+    records recall/remember in the order they actually happened, for the
+    recall-before-store tests."""
 
-    def __init__(self, hits):
+    def __init__(self, hits, day=()):
         self._hits = hits
+        self._day = list(day)
         self.queries: list[str] = []
-        self.min_scores: list = []
         self.remembered: list[tuple] = []
         self.calls: list[str] = []
 
@@ -278,23 +282,14 @@ class _FakeFrameMemory:
         return []
 
     def recall_text(self, query, k=3, before=None):
-        # The words search answers nothing here, and there is no day to read
-        # back: these tests are about the picture search and the turn's own
-        # filtering around it.
-        return []
-
-    def day_frames(self, before=None):
-        return []
-
-    def recall(self, query, k=4, must_labels=None, min_score=None):
-        # min_score is recorded, not applied: the real FrameMemory filters on
-        # it, and _handle_stream passes 0.0 so the LLM is handed the best
-        # frame whatever it scored — no threshold separates a recall question
-        # from a command (see the call site). Tests assert what was asked for.
         self.calls.append("recall")
         self.queries.append(query)
-        self.min_scores.append(min_score)
-        return self._hits
+        return [hit for hit in self._hits
+                if before is None or hit.get("ts", 0.0) < before]
+
+    def day_frames(self, before=None):
+        return [frame for frame in self._day
+                if before is None or frame.get("ts", 0.0) < before]
 
 
 
@@ -1288,21 +1283,23 @@ def test_handle_stream_does_not_search_memory_unless_the_model_asks(monkeypatch)
 
 
 def test_handle_stream_shows_visual_recall_when_the_model_calls_recall_seen(monkeypatch):
+    # The tool's older name is still answered, as a question about what was
+    # seen: the frame whose words hold it goes to the model and the screen.
     hits = [{"jpeg_b64": _b64(b"MUG"),
              "detections": [{"label": "cup", "box": [0, 0, 1, 1], "score": 0.8}],
-             "score": 0.13}]
+             "score": 0.78}]
     fm, seen = _FakeFrameMemory(hits), []
-    display = _turn(monkeypatch, "what did you see that's red?",
-                    _tool("remember", query="something red", about="seen"),
-                    _said("A red mug."), seen=seen, frame_memory=fm)
-    assert fm.queries == ["something red"]
+    display = _turn(monkeypatch, "did you see a red mug?",
+                    _tool("recall_seen", query="a red mug"), _said("A red mug."),
+                    seen=seen, frame_memory=fm)
+    assert fm.queries == ["a red mug"]
     assert display.recalls == [[], [{**hits[0], "weak": False}]]
     # The call is shown and run exactly as the model made it: nothing is
     # added to it from the words of the question.
-    assert display.tool_calls == [("remember", {"query": "something red", "about": "seen"})]
+    assert display.tool_calls == [("recall_seen", {"query": "a red mug"})]
     # the recalled frame goes to the model with the follow-up request
     assert seen[1][1].image_jpeg == b"MUG"
-    assert seen[1][1].text == "what did you see that's red?"
+    assert seen[1][1].text == "did you see a red mug?"
 
 
 def test_handle_stream_look_shows_the_model_this_turns_frame(monkeypatch):
@@ -1363,10 +1360,10 @@ def test_a_dropped_brain_does_not_break_the_turn(monkeypatch):
 # detect thread and can beat it — frames it wrote during this very turn are
 # the present, and the recall tool must drop them (demo/conversation.py). ---
 
-def _recall_frames(monkeypatch, hits, **kwargs):
-    display = _turn(monkeypatch, "what did you see?",
-                    _tool("remember", query="seen", about="seen"),
-                    _said("ok"), frame_memory=_FakeFrameMemory(hits), **kwargs)
+def _recall_frames(monkeypatch, hits, day=(), **kwargs):
+    display = _turn(monkeypatch, "did you see the bottle?",
+                    _tool("remember", query="the bottle", about="seen"),
+                    _said("ok"), frame_memory=_FakeFrameMemory(hits, day), **kwargs)
     # `weak` is how the projector dims an unconfident match; these tests are
     # about WHICH frames come back, so compare without it.
     return [{key: value for key, value in frame.items() if key != "weak"}
@@ -1379,6 +1376,17 @@ def test_handle_stream_excludes_frame_memory_hits_stored_during_this_turn(monkey
                       "ts": 100.5}
     assert _recall_frames(monkeypatch, [concurrent_hit, past_hit],
                           turn_started_at=100.0) == [past_hit]
+
+
+
+def test_the_days_frames_leave_out_the_frame_stored_during_this_turn(monkeypatch):
+    # The day starts from its newest frame: without the turn's start, the
+    # frame the scene writer stored while the question was being asked would
+    # be on the screen as a memory every time.
+    past = {"jpeg_b64": _b64(b"OLD"), "detections": [], "score": 0.0, "ts": 50.0}
+    concurrent = {"jpeg_b64": _b64(b"NEW"), "detections": [], "score": 0.0, "ts": 100.5}
+    assert _recall_frames(monkeypatch, [], day=[concurrent, past],
+                          turn_started_at=100.0) == [past]
 
 
 def test_handle_stream_keeps_frame_memory_hits_when_turn_started_at_is_none(monkeypatch):

@@ -1,12 +1,14 @@
 """What the robot saw: frames, as SigLIP 2 embeddings in its Qdrant Edge shard.
 
-The robot stores the frames it sees and can be asked, by voice, what it saw —
-answered cross-modally: the text query is embedded into the SAME space as the
-frames, so "something to drink from" finds the frame with a mug in it whether
-or not the detector named one. The detections ride along as payload metadata
-— for filtering and for the boxes drawn on the dashboard — never as the
-search key. A frame the robot has described also carries a `text` vector
-(bge) of its own words: labels, names, the side it looked, the caption.
+The robot stores the frames it sees and can be asked, by voice, what it saw.
+Every frame carries two vectors. `image` is SigLIP's embedding of the picture:
+what the day's frames are picked by (day_frames — the most different ones),
+and what the picture search (recall) matches a text query against in the same
+space. `text` is bge over the frame's own words — labels, names, the side it
+looked, the caption (frame_text) — and it is what a question about a thing
+finds (recall_text): measured, 32 right frames of 36 against the picture
+search's 8, so the conversation answers by the words and, when they hold
+nothing, by the day (demo/conversation.py).
 
 Torch-free: the onnx-community SigLIP2-base ONNX (vision + text) on the
 onnxruntime CPU EP, with the Hugging Face fast tokenizer. Measured on the
@@ -61,8 +63,8 @@ RECALL_MIN_SCORE = 0.09
 FRAME_TEXT_MIN_SCORE = 0.66
 
 # A frame with nothing in it, in frame_text's own words: "I saw something".
-# Every frame's words say "I saw ...", so a question about seeing matches every
-# frame on that alone, whatever it names. Measured with bge on the 19 frames of
+# Every labelled frame's words say "I saw ...", so a question about seeing
+# matches every such frame on that alone, whatever it names. Measured with bge on the 19 frames of
 # a run on the laptop: "What did you see?" scored 0.704 on "I saw person", "Did
 # you see a cup?" 0.676 on "I saw plant" — both over the gate, neither a match.
 # A frame counts only when it also beats this empty one, which is when its
@@ -70,7 +72,12 @@ FRAME_TEXT_MIN_SCORE = 0.66
 # question that named nothing (14 of them) scored under the empty frame
 # (-0.023 at most), and every question about a thing that was there over it
 # (+0.075 at least) — "did you see Sasha?" by +0.173 even with Sasha in every
-# frame, which comparing the frames with each other would have lost.
+# frame, which comparing the frames with each other would have lost. The
+# margins are not wide: "Did you see a dog?" with no dog anywhere scores 0.732
+# on "I saw person", over the gate, and only 0.025 under the empty frame. And
+# a question about people is about the "person" label: "who did you see
+# today?" scores 0.697 on "I saw person", over the empty frame's 0.675, and
+# gets that frame, not the day.
 EMPTY_FRAME = {"labels": ["something"]}
 
 # Where the robot can be asked to look (demo/chat_session.py's DIRECTIONS).
@@ -377,11 +384,12 @@ class FrameMemory:
 
     def day_frames(self, limit: int = DAY_FRAMES, before: float | None = None,
                    min_distance: float = DAY_MIN_DISTANCE) -> list[dict]:
-        """The day as FRAMES, picked BY PICTURE — what "what did you see
-        today?" is answered with, newest first, each with its jpeg.
+        """The day as FRAMES, picked BY PICTURE — what a `seen` question no
+        frame's words answer gets: "what did you see today?", and "did you see
+        a dog?" with no dog in any frame — newest first, each with its jpeg.
 
-        Such a question names nothing a frame's words hold — recall_text
-        finds nothing for it — and the newest frames are not the day either.
+        recall_text finds nothing for such a question, and the newest frames
+        are not the day either.
         Measured on this robot's own 371 frames: the newest 4 are the
         same picture four times — even the least similar PAIR of them is
         0.914. So the day is picked farthest-point on the `image` vector, the
@@ -467,9 +475,10 @@ class FrameMemory:
         bottle?", "what was on the table?". Measured on this robot's own
         frames it finds 32 right frames out of 36 against the picture
         search's 8 (see frame_text) — the labels and the names were always
-        in the payload, and nothing searched them. The picture search stays
-        for what words cannot hold: "the one I showed you", a thing nobody
-        named."""
+        in the payload, and nothing searched them. The conversation answers
+        by these words and, when they hold nothing, by the day's pictures
+        (demo/conversation.py's _answer_tool); the picture search (recall)
+        answers no question there any more."""
         query = query.strip()
         if self._text_embedder is None or not query:
             return []
@@ -509,10 +518,9 @@ class FrameMemory:
         with self._lock:
             hits = self._store.search(vector.tolist(), k, query_filter, using=IMAGE_VECTOR)
         # min_score=0.0 lets a caller take the best frame regardless of score.
-        # The demo does this for the frame handed to the LLM: no threshold can
-        # separate a recall question from a command (measured — see
-        # demo/run_demo.py), and the prompt gates the picture instead. The
-        # instance default still guards what the audience is shown.
+        # The demo no longer asks this search at all: no gate on it tells a
+        # question that names nothing from one about a thing
+        # (demo/conversation.py's recall_seen).
         floor = self._min_score if min_score is None else min_score
         return [hit for hit in hits if hit["score"] >= floor]
 

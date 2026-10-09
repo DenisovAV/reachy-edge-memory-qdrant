@@ -711,8 +711,10 @@ class Looker:
 
     def caption(self, reply: str | None) -> None:
         """What the robot said about the picture it just took, kept with it —
-        "what did you see?" is answered from these (demo/conversation.py's
-        recall_seen)."""
+        part of the frame's words (emulator/frame_memory.py's frame_text), so
+        a question about what was there finds the look and it is read out
+        (demo/conversation.py's LOOKS_NOTE). "What did you see?" is answered
+        from the day's pictures instead (day_frames)."""
         stored, self._stored = self._stored, None
         if stored is None or not reply or self._frame_memory is None:
             return
@@ -812,9 +814,9 @@ def _talk(heard, detections, endpoint, robot, display, conversation, *,
             recall_fn=(lambda query: recall(
                 query, window=conversation, speech_memory=speech_memory))
             if speech_memory is not None else None,
-            recall_seen_fn=(lambda query, direction=None, pictures=True: recall_seen(
+            recall_seen_fn=(lambda query, direction=None: recall_seen(
                 query, frame_memory=frame_memory, turn_started_at=turn_started_at,
-                direction=direction, pictures=pictures))
+                direction=direction))
             if frame_memory is not None else None,
             look_fn=looker.look if looker is not None else None,
             look_names_fn=(lambda: list(looker.names)) if looker is not None else None,

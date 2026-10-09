@@ -516,7 +516,14 @@ def test_with_the_real_bge_a_question_that_names_nothing_finds_no_frame():
         mem.remember(_frame(i % 3), [{"label": label} for label in labels], meta=meta)
     for question in ("What did you see today?", "Okay, so what did you see?",
                      "What did you see?", "Nice, what did you see today?",
-                     "What did you see before?", "Did you see a cup?"):
+                     "What did you see before?", "Did you see a cup?",
+                     "Did you see a dog?", "What did you notice this morning?",
+                     "Anything interesting you saw?", "What did you see before lunch?",
+                     "Have you seen my keys?",
+                     # and the questions that are not about seeing at all,
+                     # which `anything` sends here too
+                     "How do you work?", "how does your memory work",
+                     "Tell me about the universe.", "What did we talk about?"):
         assert mem.recall_text(question) == [], question
     assert "plant" in mem.recall_text("Did you see a plant?")[0]["labels"]
     assert mem.recall_text("Did you see Sasha?")[0]["names"] == ["Sasha"]
