@@ -120,7 +120,7 @@ def test_flush_moves_everything_still_in_context():
 
 
 def test_search_finds_in_context_exchanges_over_the_gate():
-    said = "Sasha: Hi, I'm Sasha. — Reachy: Nice to meet you, Sasha!"
+    said = "Person: Hi, I'm Sasha. — Reachy: Nice to meet you, Sasha!"
     window = _window(_Memory(scores={said: 0.7}))
     window.add("Hi, I'm Sasha.", "Nice to meet you, Sasha!")
     window.add("Can you nod?", "Sure!")
@@ -396,7 +396,7 @@ def test_an_answer_read_out_of_memory_does_not_go_back_into_memory():
     _turn("What did we discuss?", brain, window=window,
           recall_fn=lambda query: Recalled([], [], []))
     stored = [text for text, _kind, _meta in memory.remembered]
-    assert stored == ["Sasha: Hi, I'm Sasha. — Reachy: Hello Sasha!"]
+    assert stored == ["Person: Hi, I'm Sasha. — Reachy: Hello Sasha!"]
     assert "emotional" not in " ".join(stored)
 
 
@@ -418,51 +418,21 @@ def test_a_plain_answer_still_goes_into_memory():
     assert window.after_turn(200) == ["Person: I'm giving a talk. — Reachy: Exciting!"]
 
 
+# --- who the person is: a face, or the answer to the name question ---
 
-
-
-
-# --- who the person is, until there is face recognition ---
-
-@pytest.mark.parametrize("heard,name", [
-    ("Hi Reachy, I'm Sasha.", "Sasha"),
-    ("my name is Anna", "Anna"),
-    ("Call me Sasha, please.", "Sasha"),
-    ("this is Bob", "Bob"),
-    ("I am Sasha", "Sasha"),
-])
-def test_a_self_introduction_gives_the_speaker_a_name(heard, name):
-    from demo.conversation import speaker_name
-
-    assert speaker_name(heard) == name
-
-
-@pytest.mark.parametrize("heard", [
-    "I'm giving a talk at Vector Space Stream.",
-    "I'm not sure about that.",
-    "I am here to talk about memory.",
-    "What did you see earlier?",
-    "i'm sasha",  # lower case: a name has to look like one
-])
-def test_ordinary_sentences_are_not_read_as_a_name(heard):
-    from demo.conversation import speaker_name
-
-    assert speaker_name(heard) is None
-
-
-def test_the_name_replaces_Person_in_what_is_stored():
+def test_a_name_said_in_passing_names_nobody():
+    # Nothing reads names out of the words: a pattern over them needed a list
+    # of words that are not names ("I'm giving", "I'm not"), and a wrong name
+    # outlives the mistake. The words keep the name; the label stays Person.
     memory = _Memory()
     window = _window(memory, budget_tokens=10)
     window.add("Hello there.", "Hi!")
     window.add("I'm Sasha, by the way.", "Nice to meet you, Sasha!")
-    window.add("Tell me a joke.", "Why did the robot cross the road?")
-    # The earlier exchange is relabelled too: it has not reached memory yet,
-    # and it was the same person.
-    assert window.after_turn(500) == [
-        "Sasha: Hello there. — Reachy: Hi!"]
+    assert window.speaker is None
+    window.flush()
     assert [text for text, _kind, _meta in memory.remembered] == [
-        "Sasha: Hello there. — Reachy: Hi!"]
-
+        "Person: Hello there. — Reachy: Hi!",
+        "Person: I'm Sasha, by the way. — Reachy: Nice to meet you, Sasha!"]
 
 
 def test_a_face_names_what_nobody_was_named_for_yet():
@@ -491,14 +461,15 @@ def test_a_new_face_does_not_take_the_last_persons_words():
 
 
 def test_someone_new_names_only_their_own_words_when_they_say_who_they_are():
-    # Alice was recognised; a stranger steps in and talks, then says "I'm Bob".
-    # His words become Bob's; Alice's stay hers.
+    # Alice was recognised; a stranger steps in, talks, and answers the name
+    # question with "Bob". His words become Bob's; Alice's stay hers.
     window = _window(_Memory())
     window.set_speaker("Alice")
     window.add("My dog is called Rex.", "Lovely name!")
     window.someone_new()
     window.add("Hello there.", "Hi!")
-    window.add("I'm Bob, by the way.", "Nice to meet you, Bob!")
+    window.add("What can you do?", "I remember things.")
+    window.introduce("Bob")
     assert [e.speaker for e in window._exchanges] == ["Alice", "Bob", "Bob"]
 
 
@@ -518,7 +489,8 @@ def test_a_known_face_does_not_take_a_strangers_words():
 def test_a_stranger_who_said_their_name_keeps_it_while_they_stay():
     window = _window(_Memory())
     window.someone_new()
-    window.add("Hi, I'm Bob.", "Nice to meet you, Bob!")
+    window.add("Hi.", "Hello!")
+    window.introduce("Bob")
     window.add("What can you do?", "I remember things.")
     assert [e.speaker for e in window._exchanges] == ["Bob", "Bob"]
 
@@ -547,7 +519,7 @@ def test_recall_keeps_memory_and_the_live_context_apart():
     # What is still in the window was not remembered — the model is looking
     # at it. Only Qdrant hits count as memory, for the model and for the room.
     stored = {"text": "Person: I have a dog called Rex. — Reachy: Lovely!", "score": 0.65}
-    said = "Sasha: Hi, I'm Sasha. — Reachy: Nice to meet you, Sasha!"
+    said = "Person: Hi, I'm Sasha. — Reachy: Nice to meet you, Sasha!"
     memory = _Memory(scores={said: 0.7}, stored_hits=[stored])
     window = _window(memory)
     window.add("Hi, I'm Sasha.", "Nice to meet you, Sasha!")

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import base64
 import dataclasses
-import re
 import time
 
 from demo.contract import encode_chat_request
@@ -74,34 +73,13 @@ TURNED = {"left": "to your left", "right": "to your right"}
 # left" came back out loud as "a lamp to your left" (measured).
 WHERE = {"ahead": "in front of me", "left": "on my left", "right": "on my right"}
 
-# "Person: ..." is what every stored exchange said, including after the person
-# had introduced themselves — the memory panel read like a transcript of a
-# stranger. Until there is face recognition, the name comes from the
-# conversation itself: a self-introduction, and only a plain capitalised word
-# (the stop list keeps "I'm giving", "I'm going", "I'm not" out of it).
-# The prefix is case-insensitive ("I'm", "i'm"), the NAME is not: scoped
-# inline flags, because a case-insensitive [A-Z] would happily read "i'm
-# giving" as the name "giving".
-_INTRODUCTION = re.compile(
-    r"\b(?i:i'?m|i am|my name'?s|my name is|call me|this is)\s+"
-    r"([A-Z][a-z]{1,15})\b")
-_NOT_A_NAME = frozenset({
-    "Giving", "Going", "Here", "Sorry", "Not", "Just", "Fine", "Good", "Glad",
-    "Happy", "Ready", "Talking", "Trying", "Looking", "Doing", "Working",
-    "Thinking", "Afraid", "Sure", "Okay", "Still", "Also", "Very", "Really",
-    "The", "A", "An", "My", "About", "From", "With", "Gonna", "Getting"})
-
-
-def speaker_name(heard: str) -> str | None:
-    """The name in a self-introduction, or None."""
-    match = _INTRODUCTION.search(heard)
-    if not match:
-        return None
-    name = match.group(1)
-    return None if name in _NOT_A_NAME else name
-
-
-# How an exchange nobody was named for is written (Exchange.text).
+# How an exchange nobody was named for is written (Exchange.text). A name comes
+# from the robot's faces: one it recognises (ConversationWindow.set_speaker),
+# or the answer to its name question, which the model reads (introduce).
+# Nothing picks a name out of what is said in passing: a pattern over the
+# words needed a list of words that are not names ("I'm giving", "I'm not"),
+# and a wrong name on someone's words outlives the mistake — unnamed is the
+# safe outcome.
 UNNAMED_LABEL = "Person"
 
 
@@ -196,10 +174,10 @@ class ConversationWindow:
         self._speaker = None
 
     def introduce(self, name: str) -> None:
-        """The person said who they are — the answer to the robot's name
-        question, or "I'm Bob" in passing. Their own unnamed words take the
-        name: the current stranger's, and what was said before anyone could
-        be told apart; another stranger's, or anyone named, stay as they are."""
+        """The person said who they are, answering the robot's name question
+        (demo/people.py). Their own unnamed words take the name: the current
+        stranger's, and what was said before anyone could be told apart;
+        another stranger's, or anyone named, stay as they are."""
         for exchange in self._exchanges:
             if exchange.speaker is None and exchange.stranger in (None, self._stranger):
                 exchange.speaker = name
@@ -207,10 +185,6 @@ class ConversationWindow:
         self._stranger = None
 
     def add(self, person: str, reply: str, *, derived: bool = False) -> None:
-        name = speaker_name(person)
-        if name and name != self._speaker:
-            print(f"  speaker:  {name}")
-            self.introduce(name)
         self._exchanges.append(Exchange(
             person, reply, self._clock(), derived=derived, speaker=self._speaker,
             stranger=self._stranger if self._speaker is None else None))

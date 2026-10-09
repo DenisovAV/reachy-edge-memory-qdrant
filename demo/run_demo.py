@@ -1190,7 +1190,7 @@ def build_people(args):
 def _read_name(endpoint: str, heard: str) -> str | None:
     """Ask the model on the laptop what name was just said (demo/serve.py's
     /name): the name, or None when the answer holds none. A failure raises,
-    and demo/people.py falls back to its pattern — only then."""
+    and demo/people.py takes it as a name it did not catch."""
     return _http_post(endpoint, {"text": heard}).get("name")
 
 

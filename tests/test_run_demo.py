@@ -1469,10 +1469,8 @@ def test_handle_stream_moves_old_exchanges_into_speech_memory_over_budget(monkey
     window.add("I'm giving a talk.", "Exciting!")
     display = _turn(monkeypatch, "Can you nod?", _said("Sure!", token_count=400),
                     conversation=window)
-    # The window learned the name from "I'm Sasha" and relabelled what it
-    # had not stored yet (demo/conversation.py's speaker_name).
-    assert sm.remembered == [("exchange", "Sasha: Hi, I'm Sasha. — Reachy: Hello Sasha!")]
-    assert display.memory_writes == [["Sasha: Hi, I'm Sasha. — Reachy: Hello Sasha!"]]
+    assert sm.remembered == [("exchange", "Person: Hi, I'm Sasha. — Reachy: Hello Sasha!")]
+    assert display.memory_writes == [["Person: Hi, I'm Sasha. — Reachy: Hello Sasha!"]]
     assert window.history == [("I'm giving a talk.", "Exciting!"), ("Can you nod?", "Sure!")]
 
 
