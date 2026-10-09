@@ -583,7 +583,7 @@ def test_with_one_memory_off_the_question_is_answered_by_the_one_it_needs():
     # Frame memory can fail to open while the words open (or the other way
     # round): a question about the half that is there, and empty, still
     # gets "nothing"; a question about the half that is off gets "off".
-    from demo.conversation import MEMORY_OFF_NOTE
+    from demo.conversation import GENERAL_TOO, MEMORY_OFF_NOTE
 
     nothing = {"note": "Nothing in your memory about this."}
     no_words = lambda query: Recalled([], [])
@@ -593,7 +593,8 @@ def test_with_one_memory_off_the_question_is_answered_by_the_one_it_needs():
             ("seen", "Did you see my dog earlier?", None, no_frames, nothing),
             ("said", "Do you remember my dog?", None, no_frames, {"note": MEMORY_OFF_NOTE}),
             ("seen", "Did you see my dog earlier?", no_words, None, {"note": MEMORY_OFF_NOTE}),
-            ("anything", "Do you remember my dog?", no_words, None, {"note": MEMORY_OFF_NOTE})):
+            ("anything", "Do you remember my dog?", no_words, None,
+             {"found": [], "note": MEMORY_OFF_NOTE + GENERAL_TOO})):
         brain = _Brain(_call("remember", "my dog", about=about),
                        {"reply": "...", "token_count": 1})
         _turn(question, brain, recall_fn=words, recall_seen_fn=frames,
@@ -602,12 +603,15 @@ def test_with_one_memory_off_the_question_is_answered_by_the_one_it_needs():
 
 
 def test_with_memory_off_a_general_question_is_still_a_general_one():
-    from demo.conversation import GENERAL_QUESTION_NOTE
+    # Off is said, and so is what to do with a question that is not about the
+    # past: whether it was is the model's to tell, not a list of words.
+    from demo.conversation import GENERAL_TOO, MEMORY_OFF_NOTE
 
     brain = _Brain(_call("remember", "airplanes", about="anything"),
                    {"reply": "Wings make lift.", "token_count": 1})
     _turn("How do airplanes fly?", brain, recall_fn=None, recall_seen_fn=None)
-    assert brain.requests[1].tool_result["result"] == {"found": [], "note": GENERAL_QUESTION_NOTE}
+    assert brain.requests[1].tool_result["result"] == {
+        "found": [], "note": MEMORY_OFF_NOTE + GENERAL_TOO}
 
 
 def test_with_memory_off_the_facts_it_was_taught_still_answer():
@@ -794,13 +798,16 @@ def test_recall_seen_by_direction_is_the_last_look_that_way_before_this_turn():
     assert frames.min_scores == [], "no search: the words say nothing SigLIP can match"
 
 
-def test_recall_seen_in_general_is_the_described_looks():
-    frames = _Frames([_frame(0.9)], looks=[_look("right", 40.0, "I see a door."),
-                                            _look("ahead", 35.0),
-                                            _look("left", 30.0, "I see a lamp.")])
-    found = recall_seen("what did you see?", frame_memory=frames)
-    assert [frame["caption"] for frame in found] == ["I see a door.", "I see a lamp."]
-    assert frames.min_scores == []
+def test_recall_seen_in_general_is_the_frames_whose_words_answer():
+    # "What did you see?" names nothing a frame's words hold: nothing comes
+    # back — not the latest looks, and not the nearest picture unless asked —
+    # and that is what sends the question to the day's frames (_answer_tool).
+    looks = [_look("right", 40.0, "I see a door."), _look("left", 30.0, "I see a lamp.")]
+    frames = _Frames([_frame(0.9)], looks=looks)
+    assert recall_seen("what did you see?", frame_memory=frames, pictures=False) == []
+    assert frames.looks_asked == [] and frames.min_scores == []
+    frames = _Frames([_frame(0.9)], looks=looks, words=[looks[1]])
+    assert recall_seen("was there a lamp?", frame_memory=frames, pictures=False) == [looks[1]]
 
 
 def test_recall_seen_without_described_looks_searches_as_before():
@@ -1069,14 +1076,15 @@ def test_a_recalled_picture_says_who_was_in_it():
 def test_a_look_is_not_read_back_twice_in_one_answer():
     """A look is stored as the frame's caption AND as the exchange that
     produced it (window.remember_now) — the same sentence written two ways.
-    One answer must carry it once."""
+    One answer must carry it once: when a look answers, the latest
+    exchanges stay out."""
     caption = "I see a window with dark brown curtains on the left side."
     looks = [_look("left", 940.0, caption)]
     found = Recalled([], [], recent=[
         "Sasha: What is on your left? — Reachy: " + caption,
         "Sasha: Tell me a joke. — Reachy: Why did the robot go on vacation?"])
     # `about` left out, so `anything`: a `seen` answer leaves the exchanges
-    # out anyway. The dedup matters on the path that carries both.
+    # out anyway.
     brain = _Brain(_call("remember", "what do you remember about today?"),
                    {"reply": "I saw a window.", "token_count": 1})
     _turn("What do you remember about today?", brain, clock=lambda: 1000.0,
@@ -1085,8 +1093,7 @@ def test_a_look_is_not_read_back_twice_in_one_answer():
     result = brain.requests[1].tool_result["result"]
     assert result["you_looked_at"] == [
         "On my left, a minute ago: a window with dark brown curtains on the left side."]
-    assert result["you_talked_about"] == [
-        "Sasha: Tell me a joke. — Reachy: Why did the robot go on vacation?"]
+    assert "you_talked_about" not in result
 
 
 def test_an_undescribed_frame_comes_back_as_a_picture():
@@ -1181,9 +1188,9 @@ def test_a_sighting_does_not_hide_what_the_robot_looked_at(monkeypatch):
 
 
 def test_a_question_with_no_subject_comes_back_as_the_days_pictures():
-    """"What did you see today?" names nothing a search can use, and the
-    answer is the frames themselves — a frame IS the memory, the labels only
-    pick which one."""
+    """"What did you see today?" names nothing any frame's words hold, and
+    the answer is the frames themselves — a frame IS the memory, the labels
+    only pick which one."""
     day = [_frame(0.0, ts=940.0), _frame(0.0, ts=700.0)]
     display = _Display()
     brain = _Brain(_call("remember", "what did you see today?", about="seen"),
@@ -1225,6 +1232,36 @@ def test_a_day_with_no_frames_falls_through_to_the_words():
     assert day_asked == [1]
     assert brain.requests[1].image_jpegs == ()
     assert brain.requests[1].tool_result is not None
+
+
+def test_a_seen_question_a_frame_s_words_answer_gets_that_frame_not_the_day():
+    """The frame whose words hold what was asked is the answer — with its
+    note, which names who was in it; a day of frames carries no names, and
+    measured, "did you see Sasha?" against the day came back "I did not see
+    Sasha"."""
+    sasha = {**_frame(0.8, ts=900.0), "names": ["Sasha"]}
+    brain = _Brain(_call("remember", "Did you see Sasha?", about="seen"),
+                   {"reply": "Yes, I saw Sasha.", "token_count": 1})
+    _turn("Did you see Sasha?", brain, clock=lambda: 1000.0,
+          recall_seen_fn=lambda query, direction=None, pictures=True: [sasha],
+          day_frames_fn=lambda: pytest.fail("a frame answered: not the day"))
+    request = brain.requests[1]
+    assert request.image_jpegs == (b"FRAME",)
+    assert "Sasha was in it" in request.image_note
+
+
+def test_a_side_with_no_look_that_way_is_not_answered_with_the_day():
+    # "What was on your left?" with no look to the left: there is nothing to
+    # show for that side, and the day is not what was asked.
+    brain = _Brain(_call("remember", "what was on your left?", about="seen",
+                         direction="left"),
+                   {"reply": "I did not look there.", "token_count": 1})
+    _turn("What was on your left?", brain, clock=lambda: 1000.0,
+          recall_fn=lambda query: Recalled([], []),
+          recall_seen_fn=lambda query, direction=None, pictures=True: [],
+          day_frames_fn=lambda: pytest.fail("not the day"))
+    assert brain.requests[1].tool_result["result"] == {
+        "note": "Nothing in your memory about this."}
 
 
 def test_a_question_about_the_person_asking_is_answered_from_the_faces():
@@ -1299,8 +1336,9 @@ def test_who_says_so_when_the_faces_cannot_be_read():
 
 
 def test_a_question_that_names_something_is_still_a_search():
-    """The day is read back only when the question named nothing. "What did I
-    tell you about Qdrant?" must not come back with this afternoon's frames."""
+    """The day is read back only for a question about what was seen. "What
+    did I tell you about Qdrant?" must not come back with this afternoon's
+    frames."""
     told = "Sasha: Qdrant Edge runs on the robot — Reachy: got it"
     found = Recalled(memories=[told],
                      speech_hits=[{"text": told, "score": 0.7, "source": "qdrant"}])
@@ -1313,37 +1351,27 @@ def test_a_question_that_names_something_is_still_a_search():
         "the_person_told_you_before": [told]}
 
 
-def test_the_words_of_a_question_that_carries_no_subject():
-    from demo.conversation import subject_of
-
-    for question in ("What did you see today?", "What did we talk about?",
-                     "Do you remember anything?", "What happened earlier?",
-                     "What do you remember?"):
-        assert subject_of(question) == set(), question
-    assert subject_of("What did I tell you about Qdrant?") == {"qdrant"}
-    assert subject_of("Do you remember the mug?") == {"mug"}
-
-
 def test_a_non_visual_question_with_no_subject_never_grabs_a_random_frame():
-    from demo.conversation import GENERAL_QUESTION_NOTE
+    """Live: "how do you work?" names nothing, the same as "what did you
+    see?" — and recall_seen's old fallback for that answered it anyway, with
+    whatever frame happened to be nearest, and the model summarised an
+    unrelated caption. Now a frame comes back only when its words answer, and
+    `anything` never gets the nearest-picture guess."""
+    from demo.conversation import GENERAL_TOO, NOTHING_IN_MEMORY_NOTE
 
-    """Live: "how do you work?" reduces to no subject the same
-    way "what did you see?" does — but recall_seen's own no-subject fallback
-    used to answer it anyway, with whatever frame happened to be nearest,
-    and the model summarised an unrelated caption."""
     grabbed = []
 
     def recall_seen_fn(query, direction=None, pictures=True):
-        grabbed.append(query)
-        return [_look("ahead", 900.0, "I see a room with a red curtain.")]
+        grabbed.append(pictures)
+        return [_look("ahead", 900.0, "I see a room with a red curtain.")] if pictures else []
 
     brain = _Brain(_call("remember", "how do you work", about="anything"),
                    {"reply": "I am not sure.", "token_count": 1})
     _turn("How do you work?", brain, clock=lambda: 1000.0,
           recall_fn=lambda query: Recalled([], []), recall_seen_fn=recall_seen_fn)
-    assert grabbed == [], "a non-visual question must not search for a picture at all"
+    assert grabbed == [False], "words only: no picture guess for `anything`"
     assert brain.requests[1].tool_result["result"] == {
-        "found": [], "note": GENERAL_QUESTION_NOTE}
+        "found": [], "note": NOTHING_IN_MEMORY_NOTE + GENERAL_TOO}
 
 
 def test_a_bare_what_did_you_see_still_reaches_the_looks_even_with_a_vague_query():
@@ -1364,9 +1392,8 @@ def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
     """Live: "tell me how does your memory work?" came as
     `anything`, the fact answered at 0.74 — and the latest looks came along
     as "you_looked_at", so the screen showed the day's pictures under an
-    answer about Qdrant Edge. "memory" is a word about the mechanism, not
-    the past; and a bare question the knowledge base answers is about what
-    the robot was taught, whatever `about` says."""
+    answer about Qdrant Edge. No frame's words hold "how does your memory
+    work", and there is no fallback to the looks any more."""
     display = _Display()
     brain = _Brain(_call("remember", "how does your memory work", about="anything"),
                    {"reply": "In Qdrant Edge shards.", "token_count": 1})
@@ -1376,7 +1403,8 @@ def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
               {"text": "My memory lives in Qdrant Edge shards.", "score": 0.74,
                "source": "knowledge"}],
           recall_fn=lambda query: Recalled([], []),
-          recall_seen_fn=lambda query, direction=None, pictures=True: pytest.fail("no pictures for a fact"))
+          recall_seen_fn=lambda query, direction=None, pictures=True: (
+              pytest.fail("no pictures for a fact") if pictures else []))
     result = brain.requests[1].tool_result["result"]
     assert result == {"facts_you_were_taught": ["My memory lives in Qdrant Edge shards."]}
     assert not [e for e in display.events if e[0] == "frames" and e[1]]
@@ -1385,8 +1413,8 @@ def test_a_fact_that_cleared_the_gate_on_a_bare_question_brings_no_pictures():
 def test_about_anything_is_answered_as_anything_whatever_the_words():
     """The words of a question never change the model's `about`. "How do you
     work?" marked `anything` is answered as `anything`: the knowledge base is
-    searched, no picture search — it names nothing and says nothing about
-    the past — and, with no fact over the gate, the latest exchanges."""
+    searched, the frames by their words only — no picture guess — and, with
+    nothing over any gate, the latest exchanges."""
     asked = []
 
     def knowledge_fn(query):
@@ -1398,7 +1426,8 @@ def test_about_anything_is_answered_as_anything_whatever_the_words():
                    {"reply": "I listen and remember.", "token_count": 1})
     _turn("How do you work?", brain, knowledge_fn=knowledge_fn,
           recall_fn=lambda query: found,
-          recall_seen_fn=lambda query, direction=None, pictures=True: pytest.fail("no frames"))
+          recall_seen_fn=lambda query, direction=None, pictures=True: (
+              pytest.fail("no picture guess") if pictures else []))
     assert asked == ["how do you work"]
     assert brain.requests[1].tool_result["result"] == {
         "you_talked_about": ["Sasha: Look left. — Reachy: I see a curtain."]}
@@ -1486,11 +1515,11 @@ def test_the_models_about_is_answered_as_it_was_given():
 
 
 def test_a_question_that_says_nothing_about_seeing_gets_no_picture_guess():
-    """Live: "tell me about the universe" — about=anything,
-    subject "universe" — matched nothing by words, so the nearest-picture
-    search ran and put a frame of the room on the screen as a guess under
-    an answer about galaxies. That search exists for "the one I showed
-    you"; a question with no seeing word in it gets the words only."""
+    """Live: "tell me about the universe" — about=anything — matched nothing
+    by words, so the nearest-picture search ran and put a frame of the room
+    on the screen as a guess under an answer about galaxies. The guess is for
+    `seen` alone, and only when there is no day to read back; `anything`
+    gets the words only, whatever the question's words say."""
     asked = []
 
     def recall_seen_fn(query, direction=None, pictures=True):
@@ -1509,7 +1538,7 @@ def test_a_question_that_says_nothing_about_seeing_gets_no_picture_guess():
                    {"reply": "A bottle.", "token_count": 1})
     _turn("Do you remember the bottle?", brain, recall_fn=lambda query: Recalled([], []),
           recall_seen_fn=recall_seen_fn)
-    assert asked == [False, True, True]
+    assert asked == [False, False, False, True]
 
 
 def test_recall_seen_without_pictures_stops_at_the_words():
@@ -1559,22 +1588,25 @@ def test_a_seen_question_is_answered_from_frames_never_from_the_conversation():
     assert frames[-1] == [{**strong, "weak": False}]
 
 
-def test_a_filler_word_is_not_the_subject_of_a_question():
-    """Live: "Nice, what did you see today?" had the subject
-    "nice", missed the day-frames case, and came back as four frames of the
-    same person under a sentence copied from an old exchange."""
-    from demo.conversation import subject_of
+def test_a_seen_question_no_frame_s_words_answer_gets_the_day():
+    """Live: "Nice, what did you see today?" was judged by a list of words to
+    be about "nice", missed the day-frames case, and came back as four frames
+    of the same person under a sentence copied from an old exchange. Now
+    nothing judges the words: no frame's words hold anything it asked
+    about, so it gets the day — and the picture guess never runs."""
+    asked = []
 
-    assert subject_of("Nice, what did you see today?") == set()
-    assert subject_of("Okay, so what did you see?") == set()
-    assert subject_of("Nice, did you see the bottle?") == {"bottle"}
+    def recall_seen_fn(query, direction=None, pictures=True):
+        asked.append(pictures)
+        return []
+
     day = [_frame(0.0, ts=900.0), _frame(0.0, ts=800.0)]
     brain = _Brain(_call("remember", "Nice, what did you see today?", about="seen"),
                    {"reply": "I saw a chair and a lamp.", "token_count": 1})
     _turn("Nice, what did you see today?", brain, clock=lambda: 1000.0,
-          recall_seen_fn=lambda query, direction=None, pictures=True: pytest.fail("the day, not a search"),
-          day_frames_fn=lambda: day)
+          recall_seen_fn=recall_seen_fn, day_frames_fn=lambda: day)
     assert len(brain.requests[1].image_jpegs) == 2
+    assert asked == [False]
 
 
 def test_what_is_stored_back_is_decided_by_the_turn_never_by_the_words():
@@ -1660,7 +1692,8 @@ def test_the_picture_the_camera_gives_the_model_goes_to_the_screen():
 def test_tell_me_about_is_a_request_not_a_question_about_the_past():
     # "Tell me about black holes" read "tell" as the past and got "Nothing in
     # your memory about this." — the model then refused a general question.
-    from demo.conversation import GENERAL_QUESTION_NOTE
+    # Marked `anything`, it now gets both halves, and the model tells which.
+    from demo.conversation import GENERAL_TOO, NOTHING_IN_MEMORY_NOTE
 
     brain = _Brain(_call("remember", "black holes", about="anything"),
                    {"reply": "Black holes are regions of space.", "token_count": 1})
@@ -1668,6 +1701,6 @@ def test_tell_me_about_is_a_request_not_a_question_about_the_past():
           recall_fn=lambda query: Recalled([], []),
           recall_seen_fn=lambda query, direction=None, pictures=True: [])
     assert brain.requests[1].tool_result["result"] == {
-        "found": [], "note": GENERAL_QUESTION_NOTE}
+        "found": [], "note": NOTHING_IN_MEMORY_NOTE + GENERAL_TOO}
 
 

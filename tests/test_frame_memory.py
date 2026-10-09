@@ -453,6 +453,76 @@ def test_a_stored_frame_carries_its_objects_and_its_people_and_is_found_by_them(
     assert mem.recall_text("was there a curtain?") == [], "the gate still holds"
 
 
+class FakeWordsThatSee(FakeWords):
+    """FakeWords with one more direction: seeing. Every frame's words say "I
+    saw", and so does every question about seeing — the shared verb the real
+    bge scores too (EMPTY_FRAME)."""
+
+    _BASIS = {"bottle": [1.0, 0.0, 0.0, 0.0], "sasha": [0.0, 1.0, 0.0, 0.0],
+              "curtain": [0.0, 0.0, 1.0, 0.0], "saw": [0.0, 0.0, 0.0, 1.0],
+              "see": [0.0, 0.0, 0.0, 1.0]}
+
+    def _one(self, text):
+        low = text.lower()
+        vector = np.zeros(4, np.float32)
+        for word, basis in self._BASIS.items():
+            if word in low:
+                vector += np.asarray(basis, np.float32)
+        norm = float(np.linalg.norm(vector))
+        return vector / norm if norm else vector
+
+
+def test_a_frame_whose_words_only_share_i_saw_with_the_question_is_no_match():
+    """"What did you see?" against "I saw bottle": cosine 0.707, over the
+    gate — on the verb alone. The empty frame, "I saw something", scores
+    1.0: no frame beats it, so nothing comes back. "Did you see a bottle?"
+    scores 1.0 on the bottle and 0.707 on the empty frame, so it does."""
+    from emulator.frame_memory import FRAME_TEXT_MIN_SCORE
+
+    mem = FrameMemory(embedder=FakeEmbedder(), text_embedder=FakeWordsThatSee())
+    mem.remember(_frame(0), [{"label": "bottle"}])
+    assert np.isclose(mem._empty_frame_score(FakeWordsThatSee()._one("what did you see?")), 1.0)
+    hit = mem._store.search([float(x) for x in FakeWordsThatSee()._one("what did you see?")],
+                            1, mem._frames(), using="text")[0]
+    assert hit["score"] >= FRAME_TEXT_MIN_SCORE, "over the gate on the verb alone"
+    assert mem.recall_text("what did you see?") == []
+    assert mem.recall_text("did you see a bottle?")[0]["labels"] == ["bottle"]
+
+
+def _bge_cached() -> bool:
+    try:
+        from fastembed import TextEmbedding
+
+        TextEmbedding("BAAI/bge-small-en-v1.5", local_files_only=True, lazy_load=True)
+        return True
+    except Exception:  # noqa: BLE001 — not cached, or fastembed missing
+        return False
+
+
+@pytest.mark.skipif(not _bge_cached(), reason="bge-small is not cached")
+def test_with_the_real_bge_a_question_that_names_nothing_finds_no_frame():
+    """The measurement EMPTY_FRAME rests on, on real bge: frames written the
+    way the robot writes them. Without the empty frame, "What did you see?"
+    scored 0.704 on "I saw person" and "Did you see a cup?" 0.676 on "I saw
+    plant" — both over the 0.66 gate."""
+    from emulator.memory import _embedder
+
+    mem = FrameMemory(embedder=FakeEmbedder(),
+                      text_embedder=_embedder("BAAI/bge-small-en-v1.5"))
+    for i, (labels, meta) in enumerate((
+            (["person"], {}), (["plant"], {}), (["person", "plant"], {}),
+            (["person"], {"people": [{"name": "Sasha"}]}),
+            (["chair", "laptop"], {}), (["window"], {"looked": "left"}))):
+        mem.remember(_frame(i % 3), [{"label": label} for label in labels], meta=meta)
+    for question in ("What did you see today?", "Okay, so what did you see?",
+                     "What did you see?", "Nice, what did you see today?",
+                     "What did you see before?", "Did you see a cup?"):
+        assert mem.recall_text(question) == [], question
+    assert "plant" in mem.recall_text("Did you see a plant?")[0]["labels"]
+    assert mem.recall_text("Did you see Sasha?")[0]["names"] == ["Sasha"]
+    assert "laptop" in mem.recall_text("Was there a laptop on the desk?")[0]["labels"]
+
+
 def test_a_look_is_stored_with_its_side_and_re_embedded_when_described():
     mem = FrameMemory(embedder=FakeEmbedder(), text_embedder=FakeWords())
     point_id = mem.remember(_frame(0), [{"label": "bottle"}], meta={"looked": "left"})

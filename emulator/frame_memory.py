@@ -60,6 +60,19 @@ RECALL_MIN_SCORE = 0.09
 # about?" 0.590, "do you remember my name?" 0.630). 0.66 sits in the gap.
 FRAME_TEXT_MIN_SCORE = 0.66
 
+# A frame with nothing in it, in frame_text's own words: "I saw something".
+# Every frame's words say "I saw ...", so a question about seeing matches every
+# frame on that alone, whatever it names. Measured with bge on the 19 frames of
+# a run on the laptop: "What did you see?" scored 0.704 on "I saw person", "Did
+# you see a cup?" 0.676 on "I saw plant" — both over the gate, neither a match.
+# A frame counts only when it also beats this empty one, which is when its
+# CONTENT matched: there and on 150 frames written like the robot's, every
+# question that named nothing (14 of them) scored under the empty frame
+# (-0.023 at most), and every question about a thing that was there over it
+# (+0.075 at least) — "did you see Sasha?" by +0.173 even with Sasha in every
+# frame, which comparing the frames with each other would have lost.
+EMPTY_FRAME = {"labels": ["something"]}
+
 # Where the robot can be asked to look (demo/chat_session.py's DIRECTIONS).
 LOOKED = ("ahead", "left", "right")
 
@@ -228,6 +241,7 @@ class FrameMemory:
 
         self._embedder = embedder if embedder is not None else _embedder(repo)
         self._text_embedder = text_embedder
+        self._empty_vector = None  # EMPTY_FRAME's words, embedded on first use
         self._min_score = min_score
         self._lock = threading.Lock()
         # Size the shard from a real embedding (text tower — cheaper than
@@ -366,9 +380,9 @@ class FrameMemory:
         """The day as FRAMES, picked BY PICTURE — what "what did you see
         today?" is answered with, newest first, each with its jpeg.
 
-        Such a question names nothing to search for, so nothing is searched;
-        and the newest frames are not the day either. Measured on this robot's
-        own 371 frames: the newest 4 are the
+        Such a question names nothing a frame's words hold — recall_text
+        finds nothing for it — and the newest frames are not the day either.
+        Measured on this robot's own 371 frames: the newest 4 are the
         same picture four times — even the least similar PAIR of them is
         0.914. So the day is picked farthest-point on the `image` vector, the
         SigLIP embedding already stored with every frame: start from the
@@ -445,7 +459,9 @@ class FrameMemory:
     def recall_text(self, query: str, k: int = 3,
                     before: float | None = None) -> list[dict]:
         """Frames nearest to `query` BY THEIR WORDS — bge over frame_text,
-        gated at FRAME_TEXT_MIN_SCORE, best first.
+        gated at FRAME_TEXT_MIN_SCORE and at the empty frame (EMPTY_FRAME),
+        best first. Nothing back means no frame holds what the question asked
+        about — or that it asked about nothing in particular.
 
         This is the search for a question about a THING: "did you see a
         bottle?", "what was on the table?". Measured on this robot's own
@@ -461,10 +477,22 @@ class FrameMemory:
         with self._lock:
             hits = self._store.search([float(x) for x in vector], k,
                                       self._frames(), using=TEXT_VECTOR)
-        hits = [hit for hit in hits if hit["score"] >= FRAME_TEXT_MIN_SCORE]
+        empty = self._empty_frame_score(vector)
+        hits = [hit for hit in hits
+                if hit["score"] >= FRAME_TEXT_MIN_SCORE and hit["score"] > empty]
         if before is not None:
             hits = [hit for hit in hits if hit.get("ts", 0.0) < before]
         return hits
+
+    def _empty_frame_score(self, query_vector) -> float:
+        """What `query_vector` scores against a frame with nothing in it
+        (EMPTY_FRAME), on the same cosine the store searches with."""
+        if self._empty_vector is None:
+            empty = np.asarray(next(iter(self._text_embedder.embed(
+                [self.frame_text(EMPTY_FRAME)]))), dtype=np.float32)
+            self._empty_vector = empty / max(float(np.linalg.norm(empty)), 1e-9)
+        query = np.asarray(query_vector, dtype=np.float32)
+        return float(query @ self._empty_vector) / max(float(np.linalg.norm(query)), 1e-9)
 
     def recall(self, query: str, k: int = 4,
                must_labels: list[str] | None = None,

@@ -341,21 +341,18 @@ def recall(query: str, *, window: ConversationWindow, speech_memory=None,
 def recall_seen(query: str, *, frame_memory=None,
                 turn_started_at: float | None = None,
                 direction: str | None = None, pictures: bool = True) -> list[dict]:
-    """The `recall_seen` tool: stored frames nearest to `query` by SigLIP,
-    best first, whatever they scored — the model asked about something seen,
-    so the best frame there is goes back.
+    """The `recall_seen` tool: the stored frames that answer `query`, best
+    first — by their words, then (pictures=True) by the picture itself.
 
     direction ("left"/"right") gives the last frame taken with the head turned
     that way: "what was on your left?" is about the last look there, and the
     words of the question say nothing SigLIP can match.
 
-    With no direction, the question is about what the robot saw in general —
-    and SigLIP cannot tell that from a question about one thing: measured on
-    the robot's frames, "What did you see?" scored 0.107, over the 0.09 gate,
-    on a frame of the presenter, the same as any specific match. So when the
-    robot has looked at things on request and described them, those looks come
-    back (newest first, with what it said then); only a robot that never
-    looked falls back to the nearest frame.
+    With no direction, a frame comes back only when its words hold what the
+    question asked about (emulator/frame_memory.py's recall_text, which drops
+    a frame that scores no better than an empty one). A question that named
+    nothing in particular — "what did you see today?" — finds nothing here,
+    and that is what sends it to the day's frames (_answer_tool).
 
     turn_started_at drops frames stored during this very turn — the scene
     writer stores one the moment a new object lands in view, often while the
@@ -363,11 +360,12 @@ def recall_seen(query: str, *, frame_memory=None,
     _turn_started_at); that frame is the present, not a memory.
 
     pictures=False stops at the words: no SigLIP search for the nearest
-    picture. That search exists for "the one I showed you" — a thing nobody
-    named — and live it ran for "tell me about the universe",
+    picture, which returns a frame whatever it scored — measured on the
+    robot's frames, "What did you see?" scored 0.107, over the 0.09 gate, on
+    a frame of the presenter. That search exists for "the one I showed you" —
+    a thing nobody named — and live it ran for "tell me about the universe",
     putting the nearest frame of the room on the screen as a guess under an
-    answer about galaxies. A question that says nothing about seeing gets no
-    guess."""
+    answer about galaxies."""
     if frame_memory is None:
         return []
     try:
@@ -383,17 +381,6 @@ def recall_seen(query: str, *, frame_memory=None,
         found = frame_memory.recall_text(query, before=turn_started_at)
         if found:
             return found
-        if not subject_of(query):
-            # Nothing was named, so nothing can be searched for: the looks it
-            # was asked to take are the visual half of the day (the rest is
-            # summarised by scenes()). A question that DID name something
-            # falls through to the picture search instead — answering "was
-            # there a cup?" with this morning's looks is how the robot came
-            # to describe a desk when asked about a cup.
-            looks = [look for look in frame_memory.latest_looks(before=turn_started_at)
-                     if look.get("caption")]
-            if looks:
-                return looks
         if not pictures:
             return []
         frames = frame_memory.recall(query, min_score=0.0)
@@ -404,69 +391,9 @@ def recall_seen(query: str, *, frame_memory=None,
     return frames
 
 
-# Words that carry no subject: question words, the robot and the person, and
-# the words for time and for remembering itself. What is left of a question
-# after these is what it is ABOUT — and when nothing is left, it is about a
-# stretch of time, not about a thing (see _answer_tool).
-_NO_SUBJECT = frozenset("""
-a an the and or of to in on at for with about any some all it its this that
-these those there here what which who whom whose when where why how do does
-did done can could will would shall should may might must have has had is are
-was were be been being am i me my mine we us our you your yours he she they
-them their his her hers reachy robot please tell told say said saying speak
-talk talked talking speaking discuss discussed conversation conversations
-remember remembers remembered recall recalled memory memories know knew known
-see saw seen see look looked looking watch watched show showed shown
-today yesterday earlier before ago now recently lately still yet again just
-much many more most thing things stuff anything everything something nothing
-happened happen work works working function functions functioning operate
-operates operating
-nice okay ok well so hey hi hello please now also great cool thanks thank
-right then hmm um uh oh yes no yeah yep nope actually really again ah wow
-""".split())
-# The last two lines are fillers: live, "Nice, what did you see
-# today?" had the subject "nice", missed the day-frames case, and came back
-# as four frames of the same person under a sentence copied from an old
-# exchange. A question is about its content words, not its politeness.
-
-_QUERY_WORDS = re.compile(r"[a-z0-9']+")
-# A query that names no subject still gets the frames search when it is
-# about the past at all — "what did you see?", "what do you remember about
-# today?" — because that is what recall_seen's own no-subject fallback (the
-# latest looks) exists for. Kept separate from _NO_SUBJECT: those words are
-# stripped FROM the subject on purpose (a caption should not be judged
-# "about" the verb "saw"), but their presence is still the one signal telling
-# a memory question apart from one that names no subject and is not about
-# the past either ("how do you work?", "what are you?").
-# The words that make a question one about SEEING — the only questions the
-# nearest-picture guess (recall_seen's SigLIP search) may answer.
-_MENTIONS_SEEING = re.compile(
-    r"\b(see|saw|seen|seeing|look|looked|looking|watch|watched|show|showed|"
-    r"shown|showing|notice|noticed)\b")
-# Not "tell", "say" or "talk": they start requests — "tell me about black
-# holes" — and read as the past, they answered a general question with
-# "nothing in your memory". Their past forms stay.
-_ABOUT_THE_PAST = re.compile(
-    r"\b(see|saw|seen|seeing|look|looked|looking|watch|watched|show|showed|"
-    r"shown|remember|remembered|recall|forget|forgot|memories|"
-    r"told|said|talked|discuss|discussed|hear|heard|happen|happened|"
-    r"today|yesterday|earlier|before|ago|morning|afternoon|evening)\b")
-
-
-def subject_of(query: str) -> set[str]:
-    """What a memory query is ABOUT: its words minus the ones every question
-    here carries. Empty means the question named no subject at all — "what
-    did you see today?", "what did we talk about?", "do you remember
-    anything?" — and nothing in a vector store can match that: measured on
-    the robot's own frames, "What did you see?" scored 0.107 on a picture of
-    the presenter, the same as a real match would (see recall_seen). Those
-    are answered from the day itself, newest first, not from a search."""
-    return {word for word in _QUERY_WORDS.findall((query or "").lower())
-            if word not in _NO_SUBJECT}
-
-
 def day_frames(*, frame_memory=None, turn_started_at: float | None = None) -> list[dict]:
-    """The frames that stand for the day, for a question that named nothing.
+    """The frames that stand for the day, for a question about what was seen
+    that no frame's words answer (recall_seen).
 
     Pictures, not a list of objects: a frame IS the memory, and the labels are
     metadata that only help pick which one. The
@@ -796,12 +723,12 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
     query = str(arguments.get("query") or heard)
     direction = arguments.get("direction")
     # Which half of its past the question is about, as the MODEL sees it
-    # (demo/chat_session.py's `about`). It only matters for a question that
-    # named nothing to search for — "what did you see today?" against "what
-    # did we talk about today?", where there is no subject for either store
-    # to match and both used to answer at once. Measured, the model fills it
-    # right 18 times in 20, and both misses were "anything", which reads
-    # exactly as it did before this existed. Whatever the model put there is
+    # (demo/chat_session.py's `about`): `seen` is answered from frames, `said`
+    # and `taught` from words, `anything` from both — "what did you see
+    # today?" against "what did we talk about today?", which name nothing for
+    # either store to match and used to be answered by both at once.
+    # Measured, the model fills it right 18 times in 20, and both misses were
+    # "anything", which searches everything. Whatever the model put there is
     # what is answered: the words of the question never change it.
     about = str(arguments.get("about") or ANYTHING)
 
@@ -833,7 +760,7 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
                                    tool_result={"name": name, "result": answer}), True
 
     now = clock()
-    # Two answers that need no search at all, before any search runs.
+    # A side asked about needs no search at all.
     if direction in TURNED and recall_seen_fn is not None:
         turned = recall_seen_fn(query, direction=direction)
         if turned:
@@ -842,18 +769,36 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
             return encode_chat_request(
                 history, heard, image_jpeg=base64.b64decode(turned[0]["jpeg_b64"]),
                 image_note=memory_note(turned[0], now)), True
-    if about == SEEN and not subject_of(query) and day_frames_fn is not None:
-        # "What did you see today?" names nothing a search can use, and the
-        # answer is not a list of objects — it is the pictures themselves.
-        # The robot looks at its own day again: the newest frame and
-        # whatever looks least like it, so the
-        # answer is several moments and not one picture three times.
-        day = [frame for frame in day_frames_fn() if frame.get("jpeg_b64")]
+    if recall_seen_fn is None or direction in TURNED:
+        frames = []  # a side with no look that way: nothing to show for it
+    elif about in (SAID, TAUGHT):
+        # D: frames are not touched at all for a question about talking —
+        # nor for one about the robot itself.
+        frames = []
+    else:
+        # The frames whose WORDS hold what was asked about. No nearest-picture
+        # guess here: it returns a frame whatever it scored, and for a
+        # question that is not about seeing — "tell me about the universe",
+        # `anything` — it put a frame of the room on the screen (live).
+        frames = recall_seen_fn(query, pictures=False)
+    if about == SEEN and not frames and direction not in TURNED:
+        # Seen, and no frame's words hold anything the question asked about:
+        # it named nothing — "what did you see today?" — or a thing no frame
+        # holds. Both are answered from the day itself, as pictures: the
+        # newest frame and whatever looks least like it, so the answer is
+        # several moments and not one picture three times, and the model,
+        # looking at them, says whether the thing was there. Nothing here
+        # tells the two kinds of question apart — that took a list of words.
+        day = ([frame for frame in day_frames_fn() if frame.get("jpeg_b64")]
+               if day_frames_fn is not None else [])
         if day:
             display.on_recall([{**frame, "weak": False} for frame in day])
             return encode_chat_request(
                 history, heard,
                 image_jpeg=[base64.b64decode(frame["jpeg_b64"]) for frame in day]), True
+        if recall_seen_fn is not None:
+            # No day to show: the nearest picture, marked weak below its gate.
+            frames = recall_seen_fn(query)
 
     facts = knowledge_fn(query) if knowledge_fn is not None else []
     if about == TAUGHT and not facts:
@@ -874,44 +819,6 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
         found = Recalled([], [])
     else:
         found = recall_fn(query)
-    if recall_seen_fn is None or direction in TURNED:
-        frames = []  # a side with no look that way: nothing to show for it
-    elif about in (SAID, TAUGHT):
-        # D: frames are not touched at all for a question about talking —
-        # nor for one about the robot itself.
-        frames = []
-    elif facts and not subject_of(query):
-        # A question that names nothing and still cleared the knowledge gate
-        # is about what the robot was taught, whatever `about` says. Live:
-        # "tell me how does your memory work?" came as `anything`
-        # ("tell me" read as recall), the fact answered at 0.74 — and the
-        # latest looks came along as "you_looked_at", so the screen showed
-        # the day's pictures under an answer about Qdrant Edge.
-        frames = []
-    elif (not subject_of(query) and about != SEEN
-          and not _ABOUT_THE_PAST.search(f"{heard} {query}".lower())):
-        # Live: "how do you work?" has no real subject once "how
-        # do you work" is stripped of connectors — "work" is the one word
-        # left, and it is not a thing anyone photographs. recall_seen's own
-        # no-subject fallback exists for the seen/day case ("what did you
-        # see?" with about left off, a real ~10% of the time — see `about`'s
-        # own measurement — must still fall through to it, which is why this
-        # checks for a word about the past rather than trusting `about`
-        # alone): with neither a subject nor a word about the past at all —
-        # checked against what was HEARD too, not just the model's own
-        # `query` argument, which can be a placeholder like "anything" — it
-        # grabbed the nearest frame regardless of score and handed back its
-        # caption as if it were an answer, which is how "how do you work?"
-        # ended up summarising an unrelated picture instead of ever reaching
-        # the knowledge base.
-        frames = []
-    else:
-        # The nearest-picture guess only for a question about seeing: "tell
-        # me about the universe" (about=anything, subject "universe") used
-        # to put a frame of the room on the screen as a weak guess.
-        frames = recall_seen_fn(
-            query, pictures=about == SEEN or bool(
-                _MENTIONS_SEEING.search(f"{heard} {query}".lower())))
     seen_people = (who_fn() or {}).get("seen_earlier", []) if who_fn is not None else []
     described = [frame for frame in frames if frame.get("caption")]
 
@@ -940,23 +847,15 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
         answer["note"] = LOOKS_NOTE.format(n=len(answer["you_looked_at"]))
         display.on_recall([{**frame, "weak": False}
                            for frame in described[:LOOK_LINES]])
-    # A question with no subject in it is about a stretch of time, and a
-    # vector search has nothing to match: read the day back instead. Also
-    # when a question DID name something and the search came back empty —
-    # the latest exchanges beat "I have nothing about that".
-    if (not subject_of(query) and about != TAUGHT) or not answer:
-        # Not for `taught` with a fact in hand: the exchanges are the noise
-        # the model answered from instead of the fact, live.
+    # Nothing matched: read the latest of the conversation back instead.
+    # "What did we talk about?" names no topic, so no exchange clears the gate
+    # (recall's `recent`), and for a question that did name something the
+    # latest exchanges beat "I have nothing about that". Not when anything
+    # else answered — not for `taught` with a fact in hand above all: the
+    # exchanges are the noise the model answered from instead of the fact,
+    # live.
+    if not answer:
         recent = [] if about == SEEN else found.recent[-RECENT_IN_ANSWER:]
-        if described:
-            # A look is stored twice on purpose: as the frame's caption, and
-            # as the exchange that produced it (window.remember_now). Both
-            # would come back in this one answer, the same sentence written
-            # two ways — the caption is the better half, so the exchange goes.
-            captions = [frame.get("caption", "")[:CAPTION_MATCH_CHARS]
-                        for frame in described[:LOOK_LINES]]
-            recent = [line for line in recent
-                      if not any(caption and caption in line for caption in captions)]
         if recent:
             answer["you_talked_about"] = recent
             shown += [{"text": text, "score": 0.0, "source": "qdrant"}
@@ -1010,7 +909,7 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
     if told:
         # Only sightings, and no picture to show: "who did you see today?"
         return in_words(answer)
-    if _ABOUT_THE_PAST.search(f"{heard} {query}".lower()):
+    if about in (SEEN, SAID) or direction in TURNED:
         # A question about the past that nothing answers: "you never told
         # me" is the answer, and it is a recall — not stored back. Unless the
         # memory the question needed is not there at all (no search for it
@@ -1019,26 +918,23 @@ def _answer_tool(name, arguments, heard, history, recall_fn,
         # One that is there and simply holds nothing still says so.
         if about == SAID:
             needed_is_off = recall_fn is None
-        elif about == SEEN or direction in TURNED:
-            needed_is_off = recall_seen_fn is None
         else:
-            needed_is_off = recall_fn is None or recall_seen_fn is None
+            needed_is_off = recall_seen_fn is None
         if needed_is_off:
             return in_words({"note": MEMORY_OFF_NOTE}, from_memory=False)
-        return in_words({"note": "Nothing in your memory about this."},
-                        from_memory=False)
-    # Not about the past at all — "tell me about black holes", "how do
-    # airplanes fly?" — the model searched first, as told to, and found
-    # nothing: the question is simply a question. Measured over 6 questions:
-    # told "Nothing in your memory about
-    # this." the model refused half of them — "I don't have specific
-    # information about black holes right now" — and told it is a general
-    # question, 6/6 answered. And an answer the model gave on its own is a
-    # real exchange: it goes into the window as one, and into Qdrant when it
-    # leaves — live, "tell me about our planet" and "Earth, Mars, Venus,
-    # Mercury" were lost to the `derived` flag, and "what did we talk about?"
-    # found only the greeting.
-    return in_words({"found": [], "note": GENERAL_QUESTION_NOTE}, from_memory=False)
+        return in_words({"note": NOTHING_IN_MEMORY_NOTE}, from_memory=False)
+    # `anything`, and nothing anywhere: whether it was about the past at all
+    # is for the model to say — it is the one that read the question, and a
+    # list of words for "the past" read "tell me about black holes" as one.
+    # So the note says both (GENERAL_TOO). And an answer the model gave on its
+    # own is a real exchange: it goes into the window as one, and into Qdrant
+    # when it leaves — live, "tell me about our planet" and "Earth, Mars,
+    # Venus, Mercury" were lost to the `derived` flag, and "what did we talk
+    # about?" found only the greeting.
+    off = recall_fn is None or recall_seen_fn is None
+    return in_words({"found": [], "note": (MEMORY_OFF_NOTE if off
+                                           else NOTHING_IN_MEMORY_NOTE) + GENERAL_TOO},
+                    from_memory=False)
 
 
 # How much of the day one answer carries. Three of each: the model's context
@@ -1057,17 +953,27 @@ MEMORY_UNAVAILABLE_NOTE = ("Your memory could not be searched just now. Say "
 MEMORY_OFF_NOTE = ("Your memory is off right now. Say so plainly — never that "
                    "you do not remember.")
 # For a question that is not about the past and that memory has nothing on.
+# Measured over 6 questions: told "Nothing in your memory about this." the
+# model refused half of them — "I don't have specific information about black
+# holes right now" — and told it is a general question, 6/6 answered.
 GENERAL_QUESTION_NOTE = ("A general question, not a memory: answer it from your "
                          "own knowledge, in one or two sentences.")
+# For a question about the past that memory has nothing on.
+NOTHING_IN_MEMORY_NOTE = "Nothing in your memory about this."
+# What follows the note for an `anything` question nothing answers. Measured
+# in fresh chats on questions the model marked `anything`: with
+# NOTHING_IN_MEMORY_NOTE and this, it answered the 3 general questions of 3
+# and said it did not recall 3 memory questions of 4 ("do you remember
+# anything?" got "I remember a lot of things" under every note); with
+# GENERAL_QUESTION_NOTE alone it made up a day for 2 of the 4 — "I've been
+# busy helping people". After MEMORY_OFF_NOTE the model never said its memory
+# was off, with this or without it (0 of 4 each); this still answers the
+# general ones there.
+GENERAL_TOO = (" If it is a general question, not one about the past, answer it "
+               "from your own knowledge, in one or two sentences.")
 # For a thing asked about that no frame matches over the gate.
 NEVER_SAW_NOTE = ("Nothing in your memory shows this: you did not see it. Say "
                   "so plainly, in the past tense.")
-
-# How much of a caption has to appear in an exchange for the two to be the
-# same look said twice. A prefix, not the whole sentence: the exchange holds
-# what the robot SAID, and the caption is that reply as it was stored —
-# identical up to the trailing punctuation the reply may have picked up.
-CAPTION_MATCH_CHARS = 40
 
 
 # What comes with the looks a `recall_seen` without a direction returns, one

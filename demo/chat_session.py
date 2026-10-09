@@ -144,14 +144,13 @@ DAY_SYSTEM = (
 # "did you see me today?" came back "I do not have any memory of seeing you
 # today" while the person stood in front of it.
 #
-# `about` exists for one case: a question that names nothing to search for.
-# "What did you see today?" and "What did we talk about today?" have no
-# subject — no vector can tell them apart, and the robot used to answer both
-# with everything it had, frames and conversation together. The model says
-# which half it means; measured over 20 questions and two histories, it fills
-# it right 18 times, and both misses were
-# "anything", which reads exactly as it did before the argument existed. It
-# is ignored for a question that DOES name something: there the scores decide.
+# `about` says which half of the past is searched; the scores decide what in
+# it answers. "What did you see today?" and "What did we talk about today?"
+# name nothing — no vector can tell them apart, and the robot used to answer
+# both with everything it had, frames and conversation together. The model
+# says which half it means; measured over 20 questions and two histories, it
+# fills it right 18 times, and both misses were "anything", which searches
+# both halves, as the robot did before the argument existed.
 #
 # The description names the tense, then spells out the questions (measured
 # over 26 fresh chats, with an empty and a three-turn history).

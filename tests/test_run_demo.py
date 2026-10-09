@@ -278,8 +278,12 @@ class _FakeFrameMemory:
         return []
 
     def recall_text(self, query, k=3, before=None):
-        # The words search answers nothing here: these tests are about the
-        # picture search and the turn's own filtering around it.
+        # The words search answers nothing here, and there is no day to read
+        # back: these tests are about the picture search and the turn's own
+        # filtering around it.
+        return []
+
+    def day_frames(self, before=None):
         return []
 
     def recall(self, query, k=4, must_labels=None, min_score=None):
@@ -1289,13 +1293,13 @@ def test_handle_stream_shows_visual_recall_when_the_model_calls_recall_seen(monk
              "score": 0.13}]
     fm, seen = _FakeFrameMemory(hits), []
     display = _turn(monkeypatch, "what did you see that's red?",
-                    _tool("recall_seen", query="something red"), _said("A red mug."),
-                    seen=seen, frame_memory=fm)
+                    _tool("remember", query="something red", about="seen"),
+                    _said("A red mug."), seen=seen, frame_memory=fm)
     assert fm.queries == ["something red"]
     assert display.recalls == [[], [{**hits[0], "weak": False}]]
     # The call is shown and run exactly as the model made it: nothing is
     # added to it from the words of the question.
-    assert display.tool_calls == [("recall_seen", {"query": "something red"})]
+    assert display.tool_calls == [("remember", {"query": "something red", "about": "seen"})]
     # the recalled frame goes to the model with the follow-up request
     assert seen[1][1].image_jpeg == b"MUG"
     assert seen[1][1].text == "what did you see that's red?"
@@ -1317,7 +1321,7 @@ def test_a_turn_searches_what_was_seen_but_does_not_store_its_own_frame(monkeypa
     this_turn_frame = np.zeros((2, 2, 3), dtype=np.uint8)
     dets = [{"label": "cup", "score": 0.9, "box": [0, 0, 1, 1]}]
     fm = _FakeFrameMemory([{"jpeg_b64": _b64(b"old"), "detections": [], "score": 0.2}])
-    _turn(monkeypatch, "what did you see?", _tool("recall_seen", query="seen"),
+    _turn(monkeypatch, "what did you see?", _tool("remember", query="seen", about="seen"),
           _said("A cup."), frame_memory=fm, frame=this_turn_frame, detections=dets)
     assert fm.calls == ["recall"]
     assert fm.remembered == []
@@ -1360,7 +1364,8 @@ def test_a_dropped_brain_does_not_break_the_turn(monkeypatch):
 # the present, and the recall tool must drop them (demo/conversation.py). ---
 
 def _recall_frames(monkeypatch, hits, **kwargs):
-    display = _turn(monkeypatch, "what did you see?", _tool("recall_seen", query="seen"),
+    display = _turn(monkeypatch, "what did you see?",
+                    _tool("remember", query="seen", about="seen"),
                     _said("ok"), frame_memory=_FakeFrameMemory(hits), **kwargs)
     # `weak` is how the projector dims an unconfident match; these tests are
     # about WHICH frames come back, so compare without it.
