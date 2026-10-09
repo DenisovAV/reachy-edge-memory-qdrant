@@ -194,6 +194,7 @@ def test_tokenizer_puts_byte_fallback_tokens_back_together(tmp_path: Path):
     tok = MoonshineTokenizer(path)
     assert tok.decode([20, 21, 22, 20, 21, 22]) == "♪♪"
     assert tok.decode([23, 20, 21, 22]) == "Hi♪"
+    assert tok.decode([20, 21, 22, 23]) == "♪ Hi"
 
 
 def test_tokenizer_ignores_unknown_ids(tmp_path: Path):
@@ -295,6 +296,32 @@ class _Detector:
     def holds_speech(self, pcm):
         self.heard.append(len(pcm))
         return self.speech
+
+
+def test_moonshine_is_built_with_the_speech_detector_in_front(monkeypatch):
+    # Without it every noise is "You" again: the wiring is what matters.
+    import emulator.asr as asr
+    import emulator.speech_detector as detector
+    from emulator import models, speech
+
+    monkeypatch.setattr(models, "fetch", lambda name, **kw: f"/models/{name}")
+    built = {}
+
+    class Rec:
+        def __init__(self, model_path, tokenizer, threads=4, speech=None):
+            built.update(model=model_path, speech=speech)
+
+    class Det:
+        def __init__(self, path):
+            self.path = path
+
+    monkeypatch.setattr(asr, "Recognizer", Rec)
+    monkeypatch.setattr(asr, "MoonshineTokenizer", lambda path: path)
+    monkeypatch.setattr(detector, "SpeechDetector", Det)
+    speech.build_recognizer("moonshine")
+    assert built["model"] == f"/models/{models.ASR}"
+    assert isinstance(built["speech"], Det)
+    assert built["speech"].path == "/models/silero-vad"
 
 
 def test_an_utterance_with_no_speech_in_it_is_never_decoded():

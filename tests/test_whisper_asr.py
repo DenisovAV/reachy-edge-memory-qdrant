@@ -59,8 +59,10 @@ class _Segment:
 class _Model:
     def __init__(self, segments):
         self.segments = segments
+        self.options = {}
 
     def transcribe(self, audio, **options):
+        self.options = options
         return iter(self.segments), None
 
 
@@ -86,6 +88,8 @@ def test_a_segment_the_decoder_says_holds_no_speech_is_dropped():
     assert 0.139 < NO_SPEECH_MAX < 0.385
     recognizer, audio = _recognizer([_Segment(" Thanks for watching!", 0.62)])
     assert recognizer.transcribe(audio) == ""
+    # The VAD stays in front: the 1-in-63 noise figure is for both together.
+    assert recognizer._model.options["vad_filter"] is True
     recognizer, audio = _recognizer([_Segment(" Yes.", 0.139),
                                      _Segment(" Reachy", 0.45)])
     assert recognizer.transcribe(audio) == "Yes."

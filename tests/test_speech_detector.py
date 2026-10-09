@@ -130,3 +130,42 @@ def test_speech_that_ends_in_a_short_last_chunk_is_heard():
     # 7 chunks and 450 samples: 252 ms, over the rule only with the last bit.
     assert detector.holds_speech(np.ones(7 * 512 + 450, np.float32) * 0.1)
     assert seen == [(1, 576)] * 8, "the short last chunk is padded, not dropped"
+
+
+def test_a_quiet_stretch_shorter_than_100_ms_is_inside_the_speech():
+    # Four quiet chunks (96 ms after the first) do not end it; five would.
+    assert holds_speech([0.9] * 5 + [0.1] * 4 + [0.9] * 5)
+
+
+def test_speech_that_the_audio_ends_inside_a_pause_still_counts():
+    # Silero's own end-of-audio rule: a stretch still open counts to the end.
+    assert holds_speech([0.9] * 7 + [0.1] * 2)
+
+
+def _robot_voice():
+    try:
+        from emulator.speech import build_synthesizer
+
+        return build_synthesizer()
+    except Exception:  # noqa: BLE001 — not cached, or no espeak-ng
+        return None
+
+
+@pytest.mark.skipif(_silero() is None, reason="Silero VAD is not cached")
+def test_with_the_real_model_the_robots_own_voice_holds_speech():
+    # "Bob." in the robot's voice has only 7 chunks over 0.5: the lower line
+    # (0.35) is what carries it over 250 ms.
+    voice = _robot_voice()
+    if voice is None:
+        pytest.skip("the Inflect voice is not available")
+    from emulator.speech_detector import SpeechDetector
+
+    detector = SpeechDetector(_silero())
+    for word in ("Bob.", "Yes.", "No.", "Sasha."):
+        audio = np.asarray(voice.speak(word), dtype=np.float32)
+        count = int(len(audio) * 16000 / voice.sample_rate)
+        audio = np.interp(np.linspace(0, len(audio) - 1, count),
+                          np.arange(len(audio)), audio).astype(np.float32)
+        audio = np.concatenate([np.zeros(4800, np.float32), audio,
+                                np.zeros(9600, np.float32)])
+        assert detector.holds_speech(audio), word
