@@ -320,12 +320,14 @@ def test_warm_up_exercises_the_slow_first_calls():
 
     class Rec:
         def transcribe(self, pcm):
-            seen["heard"] = True
+            seen["heard"] = pcm
             return ""
 
     warm_up(Models(recognizer=Rec(), synthesizer=Synth(), llm=Llm()))
     assert seen["images"] and seen["images"][0], "warmup must include an image"
-    assert seen["spoke"] and seen["heard"]
+    # The voice's own words, not silence: a speech detector in front of the
+    # recognizer would keep silence from the model and leave it cold.
+    assert seen["spoke"] and np.abs(seen["heard"]).max() > 0
 
 
 def test_warm_up_survives_a_broken_component():
@@ -344,6 +346,20 @@ def test_warm_up_survives_a_broken_component():
             raise RuntimeError("asr exploded")
 
     warm_up(Models(recognizer=Boom(), synthesizer=Boom(), llm=Boom()))
+
+
+def test_the_warm_up_voice_reaches_the_recognizer_at_16k():
+    # The robot's voice speaks at 24 kHz; the recognizers hear 16 kHz, and a
+    # second of 24 kHz sound given as 16 kHz is a second and a half of slow
+    # speech.
+    from demo.serve import _at_16k
+
+    tone = np.sin(np.arange(24000) * 2 * np.pi * 440 / 24000).astype(np.float32)
+    heard = _at_16k(tone, 24000)
+    assert len(heard) == 16000 and heard.dtype == np.float32
+    assert np.abs(heard).max() > 0.9
+    np.testing.assert_array_equal(_at_16k(tone[:16000], 16000), tone[:16000])
+    assert not _at_16k(None, 24000).any() and len(_at_16k([], 24000)) == 16000
 
 
 def test_parse_args_defaults():
