@@ -257,13 +257,14 @@ class _FakeFrameMemory:
     returns canned frames, without SigLIP/onnx. `hits` answer the frames'
     words search and `day` is the day's frames, each filtered by `before` as
     the real ones are, so a test sees whether the turn's start reached them.
-    There is no picture search: nothing in the turn may ask for one. `calls`
-    records recall/remember in the order they actually happened, for the
-    recall-before-store tests."""
+    `day_likes` records the question the day's lead picture was searched for.
+    `calls` records recall/remember in the order they actually happened, for
+    the recall-before-store tests."""
 
     def __init__(self, hits, day=()):
         self._hits = hits
         self._day = list(day)
+        self.day_likes: list[str | None] = []
         self.queries: list[str] = []
         self.remembered: list[tuple] = []
         self.calls: list[str] = []
@@ -287,7 +288,8 @@ class _FakeFrameMemory:
         return [hit for hit in self._hits
                 if before is None or hit.get("ts", 0.0) < before]
 
-    def day_frames(self, before=None):
+    def day_frames(self, before=None, like=None):
+        self.day_likes.append(like)
         return [frame for frame in self._day
                 if before is None or frame.get("ts", 0.0) < before]
 
@@ -1387,6 +1389,16 @@ def test_the_days_frames_leave_out_the_frame_stored_during_this_turn(monkeypatch
     concurrent = {"jpeg_b64": _b64(b"NEW"), "detections": [], "score": 0.0, "ts": 100.5}
     assert _recall_frames(monkeypatch, [], day=[concurrent, past],
                           turn_started_at=100.0) == [past]
+
+
+def test_the_models_question_reaches_the_picture_search_of_the_day(monkeypatch):
+    # Without this wiring the day is led by its newest frame, and a door no
+    # label names is never found by what it looks like.
+    past = {"jpeg_b64": _b64(b"OLD"), "detections": [], "score": 0.0, "ts": 50.0}
+    frame_memory = _FakeFrameMemory([], day=[past])
+    _turn(monkeypatch, "did you see a door?", _tool("remember", query="a door", about="seen"),
+          _said("ok"), frame_memory=frame_memory)
+    assert frame_memory.day_likes == ["a door"]
 
 
 def test_handle_stream_keeps_frame_memory_hits_when_turn_started_at_is_none(monkeypatch):
