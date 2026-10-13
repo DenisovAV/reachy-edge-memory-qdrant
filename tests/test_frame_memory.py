@@ -411,10 +411,21 @@ def test_the_lead_is_the_frame_itself_not_its_time(monkeypatch):
     assert [frame["labels"] for frame in mem.day_frames(limit=1, like="a cup")] == [["table"]]
 
 
-def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog):
+def _down(text):
+    raise OSError("connection refused")
+
+
+@pytest.mark.parametrize("embed_text", [
+    _down,
+    lambda text: np.asarray(None, dtype=np.float32),   # {"vector": null}
+    lambda text: np.ones((1, 3), np.float32),           # nested
+    lambda text: np.ones(4, np.float32),                # another size
+    lambda text: np.full(3, np.nan, np.float32),
+], ids=["down", "null", "nested", "size", "nan"])
+def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog, embed_text):
     # The words were searched already and found nothing: with the embed
-    # service down for the question, the day is still the answer — led by
-    # the newest frame, and said in the log.
+    # service down for the question, or answering no vector, the day is
+    # still the answer — led by the newest frame, and said in the log.
     import itertools
 
     _clock(monkeypatch, itertools.count(10.0, 10.0))  # the log reads the clock too
@@ -422,11 +433,7 @@ def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog):
     mem = FrameMemory(embedder=embedder)
     mem.remember(_frame(2), [{"label": "person"}])
     mem.remember(_frame(0), [{"label": "person"}])
-
-    def down(text):
-        raise OSError("connection refused")
-
-    embedder.embed_text = down
+    embedder.embed_text = embed_text
     with caplog.at_level("WARNING", logger="emulator.frame_memory"):
         day = mem.day_frames(limit=1, like="a door")
     assert [frame["ts"] for frame in day] == [20.0]

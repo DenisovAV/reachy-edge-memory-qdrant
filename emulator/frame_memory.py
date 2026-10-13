@@ -262,6 +262,7 @@ class FrameMemory:
         if question_dim != dim:
             raise ValueError(f"the embedder puts a question in {question_dim}-d "
                              f"and a picture in {dim}-d: not one space")
+        self._dim = dim
         if store is None:
             vectors = {IMAGE: dim}
             if text_embedder is not None:
@@ -486,15 +487,18 @@ class FrameMemory:
         if not question:
             return None
         try:
-            vector = self._embedder.embed_text(question)
-        except (OSError, ValueError, KeyError) as exc:
+            vector = np.asarray(self._embedder.embed_text(question), dtype=np.float32)
+            if vector.shape != (self._dim,) or not np.isfinite(vector).all():
+                raise ValueError(f"a question vector of shape {vector.shape}, "
+                                 f"not {self._dim} numbers")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             logger.warning("no picture search (%s: %s): the newest frame leads the day",
                            type(exc).__name__, exc)
             return None
         query_filter = all_of(self._frames(),
                               less_than("ts", before) if before is not None else None)
         with self._lock:
-            nearest = self._store.nearest_ids([float(x) for x in vector], 1,
+            nearest = self._store.nearest_ids(vector.tolist(), 1,
                                               query_filter, using=IMAGE_VECTOR)
         return nearest[0] if nearest else None
 
