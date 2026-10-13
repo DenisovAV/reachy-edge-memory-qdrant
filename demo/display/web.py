@@ -134,6 +134,7 @@ class WebDashboard:
         "nothing recalled" resting state instead of silently going stale."""
         frames = [{"jpeg_b64": h["jpeg_b64"], "boxes": h.get("detections", []),
                    "score": round(float(h.get("score", 0.0)), 3),
+                   "found_by": h.get("found_by"),
                    "weak": bool(h.get("weak"))}
                   for h in hits if h.get("jpeg_b64")]
         self._recall(frames)

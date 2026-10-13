@@ -592,15 +592,22 @@ class FrameMemory:
         read, the store serialises each call itself, and the scene writer
         is not held up for the length of two scorings of every frame."""
         query_filter = self._frames_before(before)
-        every = self._store.count(query_filter)
-        if not every:
-            return []
-        scored = {"words": dict(self._store.nearest_ids(words, every, query_filter,
-                                                        using=TEXT_VECTOR))}
         in_pictures = self._in_pictures_space(query)
+        for _attempt in range(3):
+            every = self._store.count(query_filter)
+            if not every:
+                return []
+            scored = {"words": dict(self._store.nearest_ids(words, every, query_filter,
+                                                            using=TEXT_VECTOR))}
+            if in_pictures is not None:
+                scored["picture"] = dict(self._store.nearest_ids(
+                    in_pictures, every, query_filter, using=IMAGE_VECTOR))
+            # Unlocked, a frame the scene writer adds between the count and
+            # the searches would be scored by one search and not the other:
+            # scored again over the frames as they are now.
+            if self._store.count(query_filter) == every:
+                break
         if in_pictures is not None:
-            scored["picture"] = dict(self._store.nearest_ids(in_pictures, every, query_filter,
-                                                             using=IMAGE_VECTOR))
             empty = self._empty_frame_score(words)
             for point_id in scored["picture"]:
                 scored["words"].setdefault(point_id, empty)

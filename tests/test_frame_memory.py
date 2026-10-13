@@ -726,3 +726,25 @@ def test_one_bge_call_finds_and_ranks(monkeypatch):
     found = mem.recall("a bottle by the door")
     assert found and len(calls) == 1
     assert all(0.0 < frame["score"] <= 1.0 for frame in found), "the dashboard shows it"
+
+
+def test_a_frame_added_during_the_scoring_is_scored_by_both_searches(monkeypatch):
+    # The searches run without this memory's lock: a frame the scene writer
+    # stores between the count and them would be scored by one and not the
+    # other, so the frames are scored again as they are now.
+    mem = _words_and_pictures(monkeypatch, [(0, ["bottle"]), (0, ["bottle"])])
+    counts = []
+    count = mem._store.count
+    mem._store.count = lambda *a, **k: counts.append(1) or count(*a, **k)
+    search = mem._store.nearest_ids
+    added = []
+
+    def writer_runs_meanwhile(*args, **kwargs):
+        if not added:
+            added.append(mem.remember(_frame(2), [{"label": "bottle"}]))
+        return search(*args, **kwargs)
+
+    mem._store.nearest_ids = writer_runs_meanwhile
+    found = mem.recall("a bottle by the door")
+    assert len(counts) == 4, "counted, changed, counted again and held"
+    assert found[0]["labels"] == ["bottle"] and found[0]["found_by"] == "picture"
