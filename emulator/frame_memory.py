@@ -3,13 +3,16 @@
 The robot stores the frames it sees and can be asked, by voice, what it saw.
 Every frame carries an `image` vector, and a `text` one when it has words.
 `text` is bge over the frame's own words — labels, names, the side it looked,
-the caption (frame_text) — and it is what a question about a named thing
-finds first (recall_text): measured, 32 right frames of 36 against a SigLIP
-text-to-image search's 8. `image` is SigLIP's embedding of the picture, and a
-question no frame's words answer is searched against it: SigLIP's text tower
-puts the question in the same space, Qdrant hands back the nearest picture,
-and that picture leads the day's frames, the rest picked as the most
-different (day_frames; demo/conversation.py decides when).
+the caption (frame_text) — and it says whether a question names anything the
+frames hold (recall_text: a gate, and an empty frame to beat). `image` is
+SigLIP's embedding of the picture, and SigLIP's text tower puts a question in
+the same space. A question that names something is answered by both: every
+frame is scored by its words and by its picture, and the frame that stands
+out most among all of them, in either, comes first (recall) — a door no
+label names by its picture, Sasha by her name. A question that names nothing
+gets the day: its frames start from the picture nearest the question, the
+rest picked as the most different (day_frames; demo/conversation.py decides
+when).
 
 The picture search ranks; it has no gate. On the robot's own 376 frames it put
 a right frame first for 9 of 11 things no frame's words name — a door, a red
@@ -490,8 +493,21 @@ class FrameMemory:
         anything but a service or a reply at fault is logged with its
         traceback, so a bug is not mistaken for an outage. The shard's own
         search below is not covered: a store that fails is the memory down."""
-        from emulator.edge_store import all_of, less_than
+        vector = self._in_pictures_space(question)
+        if vector is None:
+            return None
+        with self._lock:
+            nearest = self._store.nearest_ids(vector, 1, self._frames_before(before),
+                                              using=IMAGE_VECTOR)
+        return nearest[0][0] if nearest else None
 
+    def _in_pictures_space(self, question: str) -> list[float] | None:
+        """`question` as SigLIP's text tower puts it, beside the pictures —
+        None for an empty question, or when it cannot be put there for any
+        reason (the embed service down, a reply that is no vector of the
+        pictures' size and some length, the text tower failing): logged —
+        with its traceback unless a service or a reply was at fault — and
+        the caller does without the picture search."""
         question = question.strip()
         if not question:
             return None
@@ -505,17 +521,82 @@ class FrameMemory:
                     or not 0.0 < float(np.linalg.norm(vector)) < np.inf):
                 raise ValueError(f"a question vector of shape {vector.shape}, "
                                  f"not {self._dim} numbers of some length")
-        except Exception as exc:  # noqa: BLE001 — the day stands without its lead
-            logger.warning("no picture search (%s: %s): the newest frame leads the day",
-                           type(exc).__name__, exc,
+        except Exception as exc:  # noqa: BLE001 — the caller does without it
+            logger.warning("no picture search for %r (%s: %s)",
+                           question, type(exc).__name__, exc,
                            exc_info=not isinstance(exc, (OSError, ValueError, KeyError)))
             return None
-        query_filter = all_of(self._frames(),
-                              less_than("ts", before) if before is not None else None)
+        return vector.tolist()
+
+    def _frames_before(self, before: float | None):
+        from emulator.edge_store import all_of, less_than
+
+        return all_of(self._frames(),
+                      less_than("ts", before) if before is not None else None)
+
+    def recall(self, query: str, k: int = 3, before: float | None = None) -> list[dict]:
+        """The frames a question about a THING finds, best first — by their
+        words or by their pictures, whichever singles a frame out.
+
+        Whether the question names anything the frames hold is the words' to
+        say (recall_text: FRAME_TEXT_MIN_SCORE and the empty frame); nothing
+        found there is nothing here, and the day answers instead
+        (demo/conversation.py). Which frames answer is both searches': every
+        frame stored before `before` is scored by its words and by its
+        picture, each search's scores are measured against all of them — how
+        far a frame stands out among everything seen — and a frame ranks by
+        the higher of the two (_standing).
+
+        The words alone put a frame of "person" first for things no label
+        names: on the robot's own 376 frames "a door" scored 0.667 on "I saw
+        chair, keyboard, person", over the gate and the empty frame, and the
+        door itself never came up. Measured there over 34 questions — 18
+        about things no frame's words name, 16 about labels and names — the
+        right frame came first for 29 by the higher standing, 17 by the words
+        alone and 24 by the picture alone, and was among the first three for
+        all 34. A frame of "person" stands out by its words by 1.7-2.1 of
+        their spread; the door, the red blanket, the microphone stand stand
+        out by their pictures by 4.4-6.5. Measured against only the 100 best
+        of each search instead of all frames, 21 of 34: among a hundred
+        frames of "person", one stands out more than it does among all."""
+        if not self.recall_text(query, before=before):
+            return []
+        best = self._standing(query, before)[:k]
         with self._lock:
-            nearest = self._store.nearest_ids(vector.tolist(), 1,
-                                              query_filter, using=IMAGE_VECTOR)
-        return nearest[0] if nearest else None
+            rows = dict(self._store.get([point_id for point_id, _found in best]))
+        return [{**rows[point_id], "found_by": found_by}
+                for point_id, found_by in best if point_id in rows]
+
+    def _standing(self, query: str, before: float | None) -> list[tuple[str, str]]:
+        """Every frame stored before `before`, best first, by how far it
+        stands out — in its words' scores or its picture's, each measured in
+        that search's own spread over all the frames — with the search it
+        stood out in ("words" or "picture")."""
+        searches = {"words": (TEXT_VECTOR, [float(x) for x in next(iter(
+            self._text_embedder.query_embed([query.strip()])))])}
+        in_pictures = self._in_pictures_space(query)
+        if in_pictures is not None:
+            searches["picture"] = (IMAGE_VECTOR, in_pictures)
+        query_filter = self._frames_before(before)
+        standing: dict[str, tuple[float, str]] = {}
+        with self._lock:
+            every = self._store.count(query_filter)
+            if not every:
+                return []
+            scored = {name: self._store.nearest_ids(vector, every, query_filter, using=using)
+                      for name, (using, vector) in searches.items()}
+        for name, hits in scored.items():
+            scores = np.asarray([score for _point_id, score in hits], dtype=np.float64)
+            # A search that scores every frame alike singles none out: each
+            # stands out by nothing in it, rather than dropping out of the
+            # answer altogether.
+            mean, spread = scores.mean(), scores.std() or 1.0
+            for point_id, score in hits:
+                stands_out = (score - mean) / spread
+                if stands_out > standing.get(point_id, (-np.inf, ""))[0]:
+                    standing[point_id] = (stands_out, name)
+        return [(point_id, found_by) for point_id, (_z, found_by)
+                in sorted(standing.items(), key=lambda item: item[1][0], reverse=True)]
 
     def people_seen(self, before: float | None = None) -> list[tuple[str, float]]:
         """Everyone named in a stored frame, with when they were last in one,

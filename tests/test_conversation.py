@@ -131,8 +131,8 @@ def test_search_finds_in_context_exchanges_over_the_gate():
 # — the recall tool —
 
 class _Frames:
-    """FrameMemory stand-in: `words` answer the frame-words search (filtered
-    by `before`, as the real recall_text is), `looks` are the frames taken on
+    """FrameMemory stand-in: `words` answer the frames search (filtered by
+    `before`, as the real recall is), `looks` are the frames taken on
     request (newest first, as latest_looks returns them), `day` the day's
     frames."""
 
@@ -146,7 +146,7 @@ class _Frames:
         self.day_befores = []
         self.day_likes = []
 
-    def recall_text(self, query, k=3, before=None):
+    def recall(self, query, k=3, before=None):
         self.word_queries.append(query)
         self.word_befores.append(before)
         return [frame for frame in self.words
@@ -669,7 +669,7 @@ def test_recall_seen_reports_a_failing_store():
     from demo.conversation import MemoryUnavailable
 
     class Down:
-        def recall_text(self, query, before=None):
+        def recall(self, query, before=None):
             raise OSError("down")
 
     with pytest.raises(MemoryUnavailable):
@@ -1059,6 +1059,22 @@ def test_a_recalled_picture_says_who_was_in_it():
                                      {"name": None}]}
     assert "Sasha and Masha were in it." in memory_note(frame, 1000.0)
     assert "in it" not in memory_note({"ts": 900.0}, 1000.0)
+
+
+def test_a_recalled_picture_says_where_each_named_face_is():
+    # Told only "Sasha was in it", the model looked at two people and said
+    # it did not see Sasha (2 of 12 answers on the robot's own frames); told
+    # where she was, it named her every time.
+    from demo.conversation import memory_note
+
+    frame = {"ts": 900.0, "names": ["Sasha", "Masha"],
+             "people": [{"name": "Sasha", "box": [0.2, 0.1, 0.3, 0.4]},
+                        {"name": "Masha", "box": [0.7, 0.1, 0.9, 0.4]},
+                        {"name": None, "box": [0.45, 0.1, 0.55, 0.4]}]}
+    assert ("Sasha and Masha were in it (Sasha on the left, Masha on the right)."
+            in memory_note(frame, 1000.0))
+    frame = {"ts": 900.0, "people": [{"name": "Sasha", "box": [0.4, 0.1, 0.6, 0.4]}]}
+    assert "Sasha was in it (Sasha in the middle)." in memory_note(frame, 1000.0)
 
 
 def test_a_look_that_answers_keeps_the_latest_exchanges_out():

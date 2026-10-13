@@ -639,3 +639,58 @@ def test_the_names_in_a_frame_are_a_flat_list_like_the_labels():
     mem.remember(_frame(1), [{"label": "cup"}])
     stored = [payload for _id, payload in mem._store.iter_points()]
     assert sorted(p.get("names", []) for p in stored) == [[], ["Robin", "Sasha"]]
+
+
+# — recall: by the words or by the picture, whichever singles a frame out —
+
+def _words_and_pictures(monkeypatch, stamps_and_labels, *, names=None):
+    import itertools
+
+    _clock(monkeypatch, itertools.count(10.0, 10.0))
+    mem = FrameMemory(embedder=FakeEmbedder(), text_embedder=FakeWords())
+    for i, (stamp, labels) in enumerate(stamps_and_labels):
+        meta = {"names": names[i]} if names and names[i] else None
+        mem.remember(_frame(stamp), [{"label": label} for label in labels], meta=meta)
+    return mem
+
+
+def test_a_frame_its_picture_singles_out_beats_frames_the_words_only_match(monkeypatch):
+    # The words hold "bottle" on five frames of the same cup, and on none of
+    # the door; asked about a bottle by the door, the one frame of a door
+    # stands out among all of them by its picture far more than any of the
+    # five does by its words — the robot's "a door" on "I saw chair,
+    # keyboard, person".
+    mem = _words_and_pictures(monkeypatch, [(0, ["bottle"])] * 5 + [(2, ["person"])])
+    found = mem.recall("a bottle by the door")
+    assert found[0]["labels"] == ["person"] and found[0]["found_by"] == "picture"
+
+
+def test_a_name_is_found_by_the_words_when_no_picture_stands_out(monkeypatch):
+    # SigLIP knows no one's name: "Did you see Sasha?" lands as near every
+    # picture as any other, and the frame her name is written on comes first.
+    mem = _words_and_pictures(monkeypatch, [(0, ["person"]), (1, ["person"]), (2, ["person"])],
+                              names=[None, ["Sasha"], None])
+    found = mem.recall("Did you see Sasha?")
+    assert found[0]["names"] == ["Sasha"] and found[0]["found_by"] == "words"
+
+
+def test_nothing_the_words_hold_is_nothing_whatever_the_pictures_say(monkeypatch):
+    # Whether the question names anything is the words' to say: the door's
+    # picture is there, but no frame's words hold a curtain.
+    mem = _words_and_pictures(monkeypatch, [(0, ["bottle"]), (2, ["person"])])
+    assert mem.recall("a curtain by the door") == []
+
+
+def test_a_frame_from_this_turn_is_never_found(monkeypatch):
+    mem = _words_and_pictures(monkeypatch, [(0, ["bottle"])] * 3 + [(2, ["bottle"])])
+    found = mem.recall("a bottle by the door", before=35.0)
+    assert found and all(frame["ts"] < 35.0 for frame in found)
+
+
+def test_without_the_picture_search_the_words_still_find(monkeypatch, caplog):
+    mem = _words_and_pictures(monkeypatch, [(0, ["person"]), (2, ["bottle"])])
+    mem._embedder.embed_text = _down
+    with caplog.at_level("WARNING", logger="emulator.frame_memory"):
+        found = mem.recall("a bottle by the door")
+    assert found[0]["labels"] == ["bottle"] and found[0]["found_by"] == "words"
+    assert any("no picture search" in record.getMessage() for record in caplog.records)

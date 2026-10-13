@@ -34,10 +34,11 @@ Qdrant Edge"](https://www.youtube.com/watch?v=PxGlBlqTxJI&t=3709s).
 - **What it saw** is stored as frames, with SigLIP 2 vectors, when the objects in
   view change or when it is asked to look. The words about a frame — the
   objects, the people in it, what the robot said about it — get a second, text
-  vector on the same point. A question finds a frame by those words first; when
-  they hold nothing, by the picture itself: SigLIP puts the question in the
-  pictures' space, and the nearest picture is among the frames the model is
-  shown, with the ones least like it.
+  vector on the same point. Whether a question names anything the frames hold,
+  those words say; which frame answers is found by the words and by the
+  picture itself — SigLIP puts the question in the pictures' space — and the
+  frame that stands out most in either comes first. A question that names
+  nothing gets the day: the picture nearest it and the ones least like it.
 - **Who it has met** is one point per person in the `people` shard: several shots
   of their face as a multivector, compared with MaxSim.
 - **What it was taught** — facts about Qdrant and about the robot itself — ships

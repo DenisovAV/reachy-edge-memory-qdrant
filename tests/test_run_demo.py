@@ -282,7 +282,7 @@ class _FakeFrameMemory:
     def latest_scenes(self, limit=3, before=None):
         return []
 
-    def recall_text(self, query, k=3, before=None):
+    def recall(self, query, k=3, before=None):
         self.calls.append("recall")
         self.queries.append(query)
         return [hit for hit in self._hits
