@@ -530,16 +530,18 @@ def test_a_name_the_model_cannot_be_asked_about_is_not_caught():
     assert people.should_ask_name()
 
 
-def test_a_bug_in_the_name_reader_is_not_taken_for_a_name_not_caught():
+@pytest.mark.parametrize("bug", [TypeError, AttributeError])
+def test_a_bug_in_the_name_reader_is_not_taken_for_a_name_not_caught(bug):
     # Only the laptop not answering is "not caught"; a bug reaches the turn's
-    # handler with its traceback instead of hiding behind the same line.
+    # handler with its traceback instead of hiding behind the same line. A
+    # typo in the reader is an AttributeError.
     def broken(heard):
-        raise TypeError("a bug")
+        raise bug("a bug")
 
     people = People(_Memory(_Match(None, 0.05)), _Reader(), read_name=broken)
     people.observe(FRAME)
     people.ask_name()
-    with pytest.raises(TypeError):
+    with pytest.raises(bug):
         people.answer_name("Sasha")
 
 

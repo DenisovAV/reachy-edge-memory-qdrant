@@ -1481,14 +1481,39 @@ def test_handle_stream_ignores_a_transcript_with_no_words(monkeypatch, heard):
 
 
 @pytest.mark.parametrize("heard", ["You", "Thanks for watching!", "Thank you.", "42.",
-                                   "You look happy!", "", "What do you see?"])
+                                   "You look happy!", "", "What do you see?",
+                                   "Ζωή", "李", "٤٢"])
 def test_words_are_never_judged_to_be_noise_by_what_they_say(heard):
     # Noise is turned away before it is a transcript, by what the recognisers
     # can tell about the audio (emulator/speech_detector.py, whisper_asr.py's
-    # NO_SPEECH_MAX); no list of words decides it here.
+    # NO_SPEECH_MAX); no list of words decides it here. A letter is any
+    # alphabet's.
     from demo.run_demo import _holds_no_words
 
     assert not _holds_no_words(heard)
+
+
+def test_the_name_reader_says_how_it_failed_in_the_terms_people_takes(monkeypatch):
+    # demo/people.py takes OSError and ValueError as "not caught" and lets
+    # everything else through as a bug: a reply cut off is the laptop not
+    # answering, a reply that is not an object is not /name's answer.
+    import http.client
+
+    import demo.run_demo as run_demo
+
+    monkeypatch.setattr(run_demo, "_http_post", lambda endpoint, payload: {"name": "Sasha"})
+    assert run_demo._read_name("http://laptop/name", "Sasha.") == "Sasha"
+
+    def cut_off(endpoint, payload):
+        raise http.client.IncompleteRead(b"")
+
+    monkeypatch.setattr(run_demo, "_http_post", cut_off)
+    with pytest.raises(OSError):
+        run_demo._read_name("http://laptop/name", "Sasha.")
+
+    monkeypatch.setattr(run_demo, "_http_post", lambda endpoint, payload: ["Sasha"])
+    with pytest.raises(ValueError):
+        run_demo._read_name("http://laptop/name", "Sasha.")
 
 
 def test_parse_args_context_budget_default_and_override():

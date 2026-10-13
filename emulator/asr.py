@@ -209,20 +209,30 @@ class Recognizer:
         window rather than cut off at 5 s. A last piece under half a second
         is the silence the voice gate waits for, not words.
 
-        Nothing for an utterance with no speech in it: this model writes
+        Nothing for a window with no speech in it: this model writes
         something for any noise ("You", for most), and its confidence in it
-        is no lower than in real words (see emulator/speech_detector.py)."""
+        is no lower than in real words (see emulator/speech_detector.py).
+        Each window is judged on its own, because in a noisy room an
+        utterance runs on to 8 s (demo/vad.py): measured, words in the first
+        window and noise in the second came out as "What do you see on the
+        table? You". A word cut by the window's edge with under 250 ms on
+        the far side goes with that window; moonshine made "Yes, yes." of
+        such a scrap."""
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
-        if self._speech is not None and not self._speech.holds_speech(pcm):
-            # Said, so a robot that stops hearing someone is not silent about
-            # why: a far microphone or a clipped one-word answer lands here too.
-            print(f"  [asr] no speech in {len(pcm) / 16000:.1f} s of sound — "
-                  "not transcribed")
-            return ""
         pieces = [pcm[start:start + WINDOW_SAMPLES]
                   for start in range(0, max(len(pcm), 1), WINDOW_SAMPLES)]
         if len(pieces) > 1 and len(pieces[-1]) < MIN_TAIL_SAMPLES:
             pieces.pop()
+        if self._speech is not None:
+            heard = [piece for piece in pieces if self._speech.holds_speech(piece)]
+            if len(heard) < len(pieces):
+                # Said, so a robot that stops hearing someone is not silent
+                # about why: a far microphone or a clipped one-word answer
+                # lands here too.
+                print(f"  [asr] no speech in {len(pieces) - len(heard)} of "
+                      f"{len(pieces)} windows of {len(pcm) / 16000:.1f} s of "
+                      "sound — not transcribed")
+            pieces = heard
         return " ".join(text for text in map(self._transcribe_window, pieces)
                         if text)
 

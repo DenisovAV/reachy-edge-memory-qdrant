@@ -326,9 +326,10 @@ class People:
         if self._read_name is not None:
             try:
                 name = self._read_name(heard)
-            except (OSError, ValueError, AttributeError) as exc:
-                # The laptop could not be asked, or answered nonsense: not
-                # caught, said so. A bug in the reader is not this — it
+            except (OSError, ValueError) as exc:
+                # The laptop could not be asked, or answered nonsense (the
+                # reader's own contract): not caught, said so. A bug in the
+                # reader is not this — it
                 # reaches the turn's own handler with its traceback. Why no
                 # pattern stands in: demo/serve.py's NAME_SYSTEM.
                 print(f"  [people] the name reader failed "

@@ -201,11 +201,14 @@ class FrameMemory:
     thread's turn handler alternates reads (`recall_text()`, `day_frames()`)
     with `remember()` (see
     demo/run_demo.py's `_handle_stream`). The Qdrant Edge shard does not
-    synchronise itself — the on-disk collection's payload/vector mutation is
-    not atomic — so `_lock` below serialises every Qdrant client call. The embedding
-    (`embed_image`, bge) and jpeg encoding stay OUTSIDE the lock: they
-    touch no shared state, and holding the lock through a SigLIP inference
-    would stall the OTHER thread's Qdrant call on model compute for nothing.
+    synchronise itself; EdgeStore does, with its own lock around every call
+    into it (emulator/edge_store.py), and that is what keeps the shard whole
+    — TextMemory writes the same store without the lock here. `_lock` below
+    only keeps this memory's own steps apart: a scan of the day, page by
+    page, never runs while this memory adds a frame. The embedding
+    (`embed_image`, bge) and jpeg encoding stay OUTSIDE it: they touch no
+    shared state, and holding it through a SigLIP inference would stall the
+    OTHER thread's frame call on model compute for nothing.
     """
 
     def __init__(self, path: str | None = None, *, embedder: "Embedder | None" = None,
@@ -309,8 +312,7 @@ class FrameMemory:
         if text_vector is not None:
             vectors[TEXT_VECTOR] = text_vector
         with self._lock:
-            # id allocation + upsert as one step under the lock, like every
-            # other call into the shard (see the class docstring).
+            # Not while this memory scans its day (see the class docstring).
             point_id = self._store.new_id()
             self._store.add(point_id, vectors, payload)
         return point_id

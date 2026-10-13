@@ -1,4 +1,5 @@
-"""Whether an utterance holds speech at all: Silero VAD, before moonshine.
+"""Whether sound holds speech at all: Silero VAD, before moonshine hears
+each 5 s window of an utterance (emulator/asr.py).
 
 The voice loop starts an utterance on loudness (demo/vad.py), so a cough, a
 fan or the robot's own motors start one too, and a recognizer always writes

@@ -26,9 +26,9 @@ from __future__ import annotations
 import _thread   # interrupt_main(): the Restart button, from its watcher thread
 import argparse
 import base64
+import http.client
 import itertools
 import json
-import re
 import threading
 import urllib.request
 
@@ -431,7 +431,7 @@ def _say(text, endpoint, robot, display, *, make_player=None, robot_guard=None,
 # of either, Whisper's own no-speech estimate), not by a list of what it
 # tends to come out as: "You", "Thanks for watching!".
 def _holds_no_words(heard: str) -> bool:
-    return bool(heard.strip()) and not re.search(r"[A-Za-z0-9]", heard)
+    return bool(heard.strip()) and not any(char.isalnum() for char in heard)
 
 
 def _handle_stream(detections, audio, endpoint, robot, display,
@@ -1189,9 +1189,19 @@ def build_people(args):
 
 def _read_name(endpoint: str, heard: str) -> str | None:
     """Ask the model on the laptop what name was just said (demo/serve.py's
-    /name): the name, or None when the answer holds none. A failure raises,
-    and demo/people.py takes it as a name it did not catch."""
-    return _http_post(endpoint, {"text": heard}).get("name")
+    /name): the name, or None when the answer holds none. The laptop not
+    answering raises OSError, an answer that is not /name's ValueError, and
+    demo/people.py takes either as a name it did not catch; anything else is
+    a bug and is not caught there."""
+    try:
+        reply = _http_post(endpoint, {"text": heard})
+    except http.client.HTTPException as exc:
+        # A reply cut off, or not HTTP at all: not an OSError, but the same
+        # laptop that could not be asked.
+        raise OSError(f"{type(exc).__name__}: {exc}") from exc
+    if not isinstance(reply, dict):
+        raise ValueError(f"/name answered {reply!r}")
+    return reply.get("name")
 
 
 # Safety margin subtracted from the utterance-anchored turn start below: the

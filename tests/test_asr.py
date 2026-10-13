@@ -338,3 +338,29 @@ def test_an_utterance_with_no_speech_in_it_is_never_decoded():
 
     recognizer._speech = _Detector(True)
     assert recognizer.transcribe(np.zeros(16000, np.float32)) == "You"
+
+
+class _Windows:
+    """A detector that hears speech in the windows it is told to, in order."""
+
+    def __init__(self, *speech):
+        self.speech = list(speech)
+
+    def holds_speech(self, pcm):
+        return self.speech.pop(0)
+
+
+@pytest.mark.parametrize("speech, decoded", [((True, False), [0]), ((False, True), [1])])
+def test_a_window_with_no_speech_in_it_is_not_decoded(speech, decoded):
+    # In a noisy room an utterance runs on to 8 s (demo/vad.py). Measured on
+    # the real models: words, then noise in the second window, came out as
+    # "What do you see on the table? You" when the utterance was judged whole.
+    from emulator.asr import Recognizer, WINDOW_SAMPLES
+
+    windows = []
+    recognizer = object.__new__(Recognizer)
+    recognizer._speech = _Windows(*speech)
+    recognizer._transcribe_window = lambda pcm: windows.append(int(pcm[0])) or "words"
+    pcm = np.concatenate([np.zeros(WINDOW_SAMPLES), np.ones(48000)]).astype(np.float32)
+    assert recognizer.transcribe(pcm) == "words"
+    assert windows == decoded

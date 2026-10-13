@@ -76,7 +76,9 @@ def test_with_the_real_model_noise_and_silence_hold_no_speech():
 
 
 def _spoken(text):
-    """`text` in a macOS voice, float32 at 16 kHz, or None off a Mac."""
+    """`text` in a macOS voice, float32 at 16 kHz, or None off a Mac — a
+    `say` that is not macOS's (GNUstep's takes none of these options) skips
+    the tests that need it rather than failing the whole file."""
     import shutil
     import subprocess
     import tempfile
@@ -85,12 +87,15 @@ def _spoken(text):
 
     if shutil.which("say") is None:
         return None
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "said.wav"
-        subprocess.run(["say", "-o", str(path), "--data-format=LEI16@16000", text],
-                       check=True)
-        with wave.open(str(path)) as wav:
-            raw = wav.readframes(wav.getnframes())
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "said.wav"
+            subprocess.run(["say", "-o", str(path), "--data-format=LEI16@16000", text],
+                           check=True, capture_output=True)
+            with wave.open(str(path)) as wav:
+                raw = wav.readframes(wav.getnframes())
+    except (OSError, subprocess.CalledProcessError, wave.Error):
+        return None
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
@@ -130,6 +135,34 @@ def test_speech_that_ends_in_a_short_last_chunk_is_heard():
     # 7 chunks and 450 samples: 252 ms, over the rule only with the last bit.
     assert detector.holds_speech(np.ones(7 * 512 + 450, np.float32) * 0.1)
     assert seen == [(1, 576)] * 8, "the short last chunk is padded, not dropped"
+    # 7 chunks and 300 samples: 243 ms. The padding is not speech.
+    assert not detector.holds_speech(np.ones(7 * 512 + 300, np.float32) * 0.1)
+
+
+def test_each_chunk_is_heard_after_the_last_one_with_the_state_it_left():
+    # Silero's own wrapper carries both from chunk to chunk: the model's
+    # state, and the last 64 samples in front of the next chunk. Reset either
+    # and every chunk is heard as the start of the sound.
+    from emulator.speech_detector import CHUNK, CONTEXT, SpeechDetector
+
+    feeds = []
+
+    class _Session:
+        def run(self, _outputs, feed):
+            feeds.append(feed)
+            return np.array([[0.0]], np.float32), feed["state"] + 1
+
+    detector = object.__new__(SpeechDetector)
+    detector._session = _Session()
+    audio = np.arange(3 * CHUNK, dtype=np.float32)
+    assert not detector.holds_speech(audio)
+    assert [float(feed["state"].flat[0]) for feed in feeds] == [0.0, 1.0, 2.0]
+    assert not feeds[0]["input"][0, :CONTEXT].any()
+    for i in (1, 2):
+        np.testing.assert_array_equal(feeds[i]["input"][0, :CONTEXT],
+                                      audio[i * CHUNK - CONTEXT:i * CHUNK])
+        np.testing.assert_array_equal(feeds[i]["input"][0, CONTEXT:],
+                                      audio[i * CHUNK:(i + 1) * CHUNK])
 
 
 def test_a_quiet_stretch_shorter_than_100_ms_is_inside_the_speech():
