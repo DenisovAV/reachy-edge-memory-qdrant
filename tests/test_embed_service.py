@@ -161,8 +161,9 @@ def test_faces_off_is_answered_503_with_why_and_said_in_health(monkeypatch, capl
         server.server_close()
 
 
-def test_warm_pays_both_load_costs_and_survives_faces_off():
-    # SigLIP is warmed through its picture side, the only one there is now.
+def test_warm_pays_every_load_cost_and_survives_faces_off():
+    # Both of SigLIP's towers: a frame is embedded by one, the question that
+    # searches the pictures by the other.
     import numpy as np
 
     from demo.embed_service import Embedders
@@ -174,6 +175,10 @@ def test_warm_pays_both_load_costs_and_survives_faces_off():
             called.append(("image", np.asarray(frame).shape))
             return np.zeros(3, np.float32)
 
+        def embed_text(self, text):
+            called.append(("question", text))
+            return np.zeros(3, np.float32)
+
     class Words:
         def embed(self, texts):
             called.append(("words", list(texts)))
@@ -183,4 +188,4 @@ def test_warm_pays_both_load_costs_and_survives_faces_off():
     embedders._siglip, embedders._bge = Pictures(), Words()
     embedders.faces_off = "no face models here"
     embedders.warm()
-    assert called == [("image", (64, 64, 3)), ("words", ["warm"])]
+    assert called == [("image", (64, 64, 3)), ("question", "warm"), ("words", ["warm"])]

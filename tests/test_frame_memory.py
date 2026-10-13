@@ -20,10 +20,18 @@ class FakeEmbedder:
     differently share nothing (0.0)."""
 
     _BASIS = {0: [1.0, 0.0, 0.0], 1: [0.0, 1.0, 0.0], 2: [0.0, 0.0, 1.0]}
+    # What each stamp is a picture of, for a question in the same space.
+    _LOOKS_LIKE = {"cup": 0, "lamp": 1, "door": 2}
 
     def embed_image(self, frame_rgb):
         idx = int(np.asarray(frame_rgb)[0, 0, 0])
         return np.asarray(self._BASIS.get(idx, [0.0, 0.0, 0.0]), np.float32)
+
+    def embed_text(self, text):
+        # A question lands on the picture of what it asks about; one about
+        # nothing in particular is as near every picture as any other.
+        idx = next((i for thing, i in self._LOOKS_LIKE.items() if thing in text), None)
+        return np.asarray(self._BASIS.get(idx, [1.0, 1.0, 1.0]), np.float32)
 
 
 def _frame(basis: int) -> np.ndarray:
@@ -340,6 +348,50 @@ def test_min_distance_is_what_counts_as_a_different_picture(monkeypatch):
 
 def test_the_day_of_a_robot_that_has_seen_nothing_is_empty():
     assert _mem().day_frames() == []
+    assert _mem().day_frames(like="a door") == []
+
+
+def test_the_day_is_led_by_the_picture_nearest_the_question(monkeypatch):
+    """A door no label names is found by what it looks like: the picture
+    search picks the day's first frame, and the rest are picked around it."""
+    _clock(monkeypatch, [10.0, 20.0, 30.0])
+    mem = _mem()
+    mem.remember(_frame(2), [{"label": "person"}])   # a door; no word says so
+    mem.remember(_frame(1), [{"label": "person"}])
+    mem.remember(_frame(0), [{"label": "person"}])
+    assert [frame["ts"] for frame in mem.day_frames(limit=1, like="did you see a door?")] == [10.0]
+    assert [frame["ts"] for frame in mem.day_frames(limit=1)] == [30.0], "no question: the newest"
+    assert [frame["ts"] for frame in mem.day_frames(limit=1, like="  ")] == [30.0]
+    # Led by the door, the day is still the day, newest first.
+    assert [frame["ts"] for frame in mem.day_frames(like="a door")] == [30.0, 20.0, 10.0]
+
+
+def test_a_picture_older_than_the_pool_still_leads(monkeypatch):
+    # The pool is the newest scenes; the search runs over every frame, so an
+    # old picture of the thing asked about is not aged out of the answer.
+    import itertools
+
+    import emulator.frame_memory as frame_memory
+
+    monkeypatch.setattr(frame_memory, "DAY_POOL_SCENES", 2)
+    _clock(monkeypatch, itertools.count(10.0, 10.0))
+    mem = _mem()
+    mem.remember(_frame(2), [{"label": "person"}])
+    for _ in range(4):
+        mem.remember(_frame(0), [{"label": "person"}])
+    assert [frame["ts"] for frame in mem.day_frames(limit=1, like="a door")] == [10.0]
+
+
+def test_a_picture_taken_during_this_turn_never_leads(monkeypatch):
+    # The camera's frame of the door, taken while the question was asked, is
+    # the present: something from before the turn leads instead.
+    _clock(monkeypatch, [10.0, 20.0, 30.0])
+    mem = _mem()
+    mem.remember(_frame(1), [{"label": "person"}])
+    mem.remember(_frame(0), [{"label": "person"}])
+    mem.remember(_frame(2), [{"label": "person"}])
+    day = mem.day_frames(before=25.0, like="a door")
+    assert day and all(frame["ts"] < 25.0 for frame in day)
 
 
 class FakeWords:
