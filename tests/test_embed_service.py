@@ -189,3 +189,39 @@ def test_warm_pays_every_load_cost_and_survives_faces_off():
     embedders.faces_off = "no face models here"
     embedders.warm()
     assert called == [("image", (64, 64, 3)), ("question", "warm"), ("words", ["warm"])]
+
+
+def test_a_question_is_put_in_the_pictures_space_over_http():
+    # The robot's picture search asks the laptop for the question's SigLIP
+    # vector: the route has to reach the text tower, not the image one.
+    import json
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import numpy as np
+
+    from demo.embed_service import TEXT_PATH, Embedders, make_handler
+
+    asked = []
+
+    class Pictures:
+        def embed_text(self, text):
+            asked.append(text)
+            return np.array([0.25, 0.5], np.float32)
+
+    embedders = Embedders()
+    embedders._siglip = Pictures()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(embedders))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_address[1]}{TEXT_PATH}", method="POST",
+            data=json.dumps({"text": "a door"}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=5) as resp:
+            assert json.loads(resp.read()) == {"vector": [0.25, 0.5]}
+        assert asked == ["a door"]
+    finally:
+        server.shutdown()
+        server.server_close()

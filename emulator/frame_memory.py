@@ -113,11 +113,6 @@ DAY_MIN_DISTANCE = 0.97
 # robot was asked for — plus this many of the newest scenes.
 DAY_POOL_SCENES = 40
 
-# How many of the nearest pictures the search for the day's lead brings back,
-# so one still comes from before the turn: the scene writer stores at most one
-# frame every SCENE_MIN_INTERVAL_S, and a turn looks a few times at most.
-NEAREST_PICTURE_CANDIDATES = 8
-
 # How a frame is told apart from an exchange in the shared `memory` shard, and
 # the named vectors it carries (emulator/edge_store.py).
 FRAME_KIND = "frame"
@@ -260,6 +255,13 @@ class FrameMemory:
         # silently mismatch the shard, mirroring TextMemory.
         dim = len(self._embedder.embed_image(
             np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), np.uint8)))
+        # The question's side too, in the same space: a text tower that is
+        # missing or of another size fails the start, not the first question
+        # no frame's words answer (day_frames).
+        question_dim = len(self._embedder.embed_text("a picture"))
+        if question_dim != dim:
+            raise ValueError(f"the embedder puts a question in {question_dim}-d "
+                             f"and a picture in {dim}-d: not one space")
         if store is None:
             vectors = {IMAGE: dim}
             if text_embedder is not None:
@@ -392,11 +394,12 @@ class FrameMemory:
         door?" with no label for one, and "did you see a dog?" with no dog in
         any frame — newest first, each with its jpeg.
 
-        Given `like` — the question, as the model put it — the frame whose
-        picture is nearest it leads instead of the newest (_nearest_picture):
-        the door no label names, found by what it looks like. Nothing decides
+        Given `like` — the question, as the model put it — the pick starts
+        from the frame whose picture is nearest it instead of the newest
+        (_nearest_picture), so that frame is always among those returned: the
+        door no label names, found by what it looks like. Nothing decides
         whether the question named anything; a question that named nothing
-        leads with some frame of the day, which is still the day.
+        starts from some frame of the day, which is still the day.
 
         recall_text finds nothing for such a question, and the newest frames
         are not the day either.
@@ -426,7 +429,7 @@ class FrameMemory:
         """
         if limit < 1:
             return []
-        lead_ts = self._nearest_picture(like, before) if like else None
+        lead_id = self._nearest_picture(like, before) if like else None
         with self._lock:
             rows = [(point_id, payload) for point_id, payload
                     in self._store.iter_points(self._frames(),
@@ -434,7 +437,7 @@ class FrameMemory:
         rows = [row for row in rows
                 if before is None or row[1].get("ts", 0.0) < before]
         rows.sort(key=lambda row: row[1].get("ts", 0.0), reverse=True)
-        lead = next((row for row in rows if row[1].get("ts") == lead_ts), None)
+        lead = next((row for row in rows if row[0] == lead_id), None)
         pool = [row for row in rows if row[1].get("looked")]
         pool += [row for row in rows if not row[1].get("looked")][:DAY_POOL_SCENES]
         if lead is not None and lead not in pool:
@@ -465,22 +468,35 @@ class FrameMemory:
             return [payload for _point_id, payload
                     in self._store.get([point_ids[i] for i in sorted(picked)])]
 
-    def _nearest_picture(self, question: str, before: float | None) -> float | None:
-        """When the stored frame whose PICTURE is nearest `question` was
-        taken: SigLIP's text tower puts the question in the pictures' space,
-        and the shard searches every frame's `image` vector for it — no gate
-        (see the module docstring). None for an empty question, or when
-        every near picture was taken during this turn (`before`)."""
+    def _nearest_picture(self, question: str, before: float | None) -> str | None:
+        """The id of the stored frame, taken before `before`, whose PICTURE
+        is nearest `question`: SigLIP's text tower puts the question in the
+        pictures' space, and the shard searches every such frame's `image`
+        vector for it — no gate (see the module docstring). None for an
+        empty question.
+
+        None too when the question cannot be put in that space — the embed
+        service down, or a reply that is no vector. The words were searched
+        already and found nothing, so the day is still the answer; only its
+        lead is lost, and that is logged rather than taking the memory down
+        with it."""
+        from emulator.edge_store import all_of, less_than
+
         question = question.strip()
         if not question:
             return None
-        vector = self._embedder.embed_text(question)
+        try:
+            vector = self._embedder.embed_text(question)
+        except (OSError, ValueError, KeyError) as exc:
+            logger.warning("no picture search (%s: %s): the newest frame leads the day",
+                           type(exc).__name__, exc)
+            return None
+        query_filter = all_of(self._frames(),
+                              less_than("ts", before) if before is not None else None)
         with self._lock:
-            hits = self._store.search([float(x) for x in vector],
-                                      NEAREST_PICTURE_CANDIDATES, self._frames(),
-                                      using=IMAGE_VECTOR)
-        return next((hit.get("ts") for hit in hits
-                     if before is None or hit.get("ts", 0.0) < before), None)
+            nearest = self._store.nearest_ids([float(x) for x in vector], 1,
+                                              query_filter, using=IMAGE_VECTOR)
+        return nearest[0] if nearest else None
 
     def people_seen(self, before: float | None = None) -> list[tuple[str, float]]:
         """Everyone named in a stored frame, with when they were last in one,

@@ -36,7 +36,8 @@ Qdrant Edge"](https://www.youtube.com/watch?v=PxGlBlqTxJI&t=3709s).
   objects, the people in it, what the robot said about it — get a second, text
   vector on the same point. A question finds a frame by those words first; when
   they hold nothing, by the picture itself: SigLIP puts the question in the
-  pictures' space, and the nearest picture leads the frames the model is shown.
+  pictures' space, and the nearest picture is among the frames the model is
+  shown, with the ones least like it.
 - **Who it has met** is one point per person in the `people` shard: several shots
   of their face as a multivector, compared with MaxSim.
 - **What it was taught** — facts about Qdrant and about the robot itself — ships
