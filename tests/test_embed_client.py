@@ -86,17 +86,23 @@ def test_embed_text_posts_to_the_text_path(monkeypatch):
     assert vector.tolist() == [0.0, 1.0, 0.0]
 
 
-def test_siglip_embedder_failure_raises_rather_than_returning_a_vector(monkeypatch):
+_FRAME = np.zeros((4, 4, 3), np.uint8)
+
+
+@pytest.mark.parametrize("call", [lambda e: e.embed_image(_FRAME),
+                                  lambda e: e.embed_text("hello")],
+                         ids=["picture", "question"])
+def test_siglip_embedder_failure_raises_rather_than_returning_a_vector(monkeypatch, call):
     # A camera drop-out costs a frame; a memory that swallows a failed write
     # costs the demo its premise (see the module docstring) — the client must
-    # never turn a connection failure into a fake vector.
+    # never turn a connection failure into a fake vector, on either tower.
     def failing_urlopen(request, timeout=None):
         raise OSError("connection refused")
 
     monkeypatch.setattr("urllib.request.urlopen", failing_urlopen)
     embedder = RemoteSiglipEmbedder("10.0.0.5")
     with pytest.raises(OSError):
-        embedder.embed_text("hello")
+        call(embedder)
 
 
 # --- RemoteBgeEmbedder: embed() (document side) vs query_embed() (query side) ---

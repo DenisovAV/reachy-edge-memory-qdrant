@@ -104,7 +104,9 @@ SCENE_MIN_INTERVAL_S = 10.0
 DAY_FRAMES = 3
 DAY_MIN_DISTANCE = 0.97
 
-# How far back the picture-based pick is allowed to look. iter_points does not
+# How far back the picture-based pick is allowed to look — all but its start:
+# the picture nearest the question is searched among every frame, however
+# old (day_frames' `like`). iter_points does not
 # hand back vectors, so every candidate costs a retrieve of its own: measured
 # on the robot's own 371 frames, 47 candidates cost 0.5 ms against 4.1 ms
 # for all 371, and the store gains a frame every 10 s for as long as the robot
@@ -167,9 +169,9 @@ class SiglipEmbedder:
         self._vision_in = self._vision.get_inputs()[0].name
         self._text_inputs = {i.name for i in self._text.get_inputs()}
         self._tokenizer = Tokenizer.from_file(hf_hub_download(repo, "tokenizer.json"))
-        # SigLIP: fixed-length pad to 64 (pad id 0 = </s>), truncate to 64.
+        # SigLIP: fixed-length pad to 64 (pad id 0 = <pad>), truncate to 64.
         self._tokenizer.enable_padding(length=MAX_TEXT_TOKENS, pad_id=0,
-                                       pad_token="</s>")
+                                       pad_token="<pad>")
         self._tokenizer.enable_truncation(MAX_TEXT_TOKENS)
 
     def _pooler(self, session, outputs) -> "NDArray[np.float32]":
@@ -408,7 +410,8 @@ class FrameMemory:
         same picture four times — even the least similar PAIR of them is
         0.914. So the day is picked farthest-point on the `image` vector, the
         SigLIP embedding already stored with every frame: start from the
-        newest, then keep taking the frame least like everything taken so far,
+        picture nearest the question (the newest, without one), then keep
+        taking the frame least like everything taken so far,
         up to `limit` — only a near-duplicate (closer than `min_distance` to
         something already picked) is left out. Picked that way, four frames of
         the same evening are four different scenes: least similar pair 0.609
@@ -426,7 +429,10 @@ class FrameMemory:
         whole call warm, of which the walk that finds the candidates (not the
         vectors) is 3.8 ms; the first call after a start pays ~160 ms more,
         paging the shard in. Measured on the Mac — the CM4 is the slower
-        machine, and the per-point fetch is what the cap bounds there.
+        machine, and the per-point fetch is what the cap bounds there. A
+        question to start from adds its SigLIP embedding and one search over
+        every frame: 24-38 ms for the whole call on the Mac, over the robot's
+        376 frames.
         """
         if limit < 1:
             return []
@@ -491,9 +497,14 @@ class FrameMemory:
             return None
         try:
             vector = np.asarray(self._embedder.embed_text(question), dtype=np.float32)
-            if vector.shape != (self._dim,) or not np.isfinite(vector).all():
+            # Of the pictures' size, every number finite, and a length the
+            # search can divide by: a zero vector, or one whose length
+            # underflows or overflows, has no direction and would lead the
+            # day with an arbitrary frame.
+            if (vector.shape != (self._dim,) or not np.isfinite(vector).all()
+                    or not 0.0 < float(np.linalg.norm(vector)) < np.inf):
                 raise ValueError(f"a question vector of shape {vector.shape}, "
-                                 f"not {self._dim} numbers")
+                                 f"not {self._dim} numbers of some length")
         except Exception as exc:  # noqa: BLE001 — the day stands without its lead
             logger.warning("no picture search (%s: %s): the newest frame leads the day",
                            type(exc).__name__, exc,

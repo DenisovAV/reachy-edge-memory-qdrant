@@ -1382,9 +1382,9 @@ def test_handle_stream_excludes_frame_memory_hits_stored_during_this_turn(monkey
 
 
 def test_the_days_frames_leave_out_the_frame_stored_during_this_turn(monkeypatch):
-    # The day starts from its newest frame: without the turn's start, the
-    # frame the scene writer stored while the question was being asked would
-    # be on the screen as a memory every time.
+    # The frame the scene writer stored while the question was being asked
+    # is the day's newest, and can be the picture nearest the question too:
+    # without the turn's start it would be on the screen as a memory.
     past = {"jpeg_b64": _b64(b"OLD"), "detections": [], "score": 0.0, "ts": 50.0}
     concurrent = {"jpeg_b64": _b64(b"NEW"), "detections": [], "score": 0.0, "ts": 100.5}
     assert _recall_frames(monkeypatch, [], day=[concurrent, past],

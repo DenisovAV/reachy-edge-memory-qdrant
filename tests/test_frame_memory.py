@@ -426,8 +426,12 @@ def _tower_failed(text):
     lambda text: np.ones(4, np.float32),                # another size
     lambda text: np.full(3, np.nan, np.float32),
     lambda text: [10 ** 1000, 0, 0],                    # a number no float holds
+    lambda text: np.zeros(3, np.float32),               # no direction at all
+    lambda text: np.full(3, 1e-30, np.float32),         # a length that underflows
+    lambda text: np.full(3, 3e38, np.float32),          # a length that overflows
     _tower_failed,                                       # the text tower on the robot
-], ids=["down", "null", "nested", "size", "nan", "overflow", "onnx"])
+], ids=["down", "null", "nested", "size", "nan", "overflow", "zero", "tiny", "huge",
+        "onnx"])
 def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog, embed_text):
     # The words were searched already and found nothing: with the embed
     # service down for the question, answering no vector, or the text tower

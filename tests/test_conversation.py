@@ -655,8 +655,9 @@ def test_recall_seen_drops_frames_stored_during_this_turn():
 
 
 def test_the_day_leaves_out_the_frames_stored_during_this_turn():
-    # The newest frame is always the first of the day: without the turn's
-    # start it would be the present, on the screen, as a memory.
+    # The turn's own frame is the newest, and can be the picture nearest the
+    # question too: without the turn's start it would be the present, on the
+    # screen, as a memory.
     frames = _Frames(day=[_frame(0.0, ts=50.0), _frame(0.0, ts=10.0)])
     assert [frame["ts"] for frame in day_frames("a door", frame_memory=frames,
                                                 turn_started_at=40.0)] == [10.0]
@@ -1548,9 +1549,10 @@ def test_the_models_about_is_answered_as_it_was_given():
 def test_no_question_gets_a_picture_guess():
     """Live: "tell me about the universe" — about=anything — matched nothing
     by words, so the nearest-picture search ran and put a frame of the room
-    on the screen as a guess under an answer about galaxies. Now no question
-    gets that guess: `anything` gets the frames' words, `seen` the frames'
-    words and then the day — and with no day either, nothing."""
+    on the screen as a guess under an answer about galaxies. Now `anything`
+    gets the frames' words and never a picture; `seen` gets the frames' words
+    and then the day, led by the picture nearest the question — and with no
+    frames at all, nothing."""
     from demo.conversation import NOTHING_IN_MEMORY_NOTE
 
     frames = _Frames()
@@ -1562,7 +1564,7 @@ def test_no_question_gets_a_picture_guess():
                        {"reply": "...", "token_count": 1})
         _turn(question, brain, display=display, recall_fn=lambda query: Recalled([], []),
               recall_seen_fn=lambda query, direction=None: recall_seen(query, frame_memory=frames),
-              day_frames_fn=lambda query: day_frames(frame_memory=frames))
+              day_frames_fn=lambda query: day_frames(query, frame_memory=frames))
         assert brain.requests[1].image_jpegs == (), question
         assert not [e for e in display.events if e[0] == "frames" and e[1]], question
     assert brain.requests[1].tool_result["result"] == {"note": NOTHING_IN_MEMORY_NOTE}
