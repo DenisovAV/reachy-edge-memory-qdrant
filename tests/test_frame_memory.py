@@ -694,3 +694,35 @@ def test_without_the_picture_search_the_words_still_find(monkeypatch, caplog):
         found = mem.recall("a bottle by the door")
     assert found[0]["labels"] == ["bottle"] and found[0]["found_by"] == "words"
     assert any("no picture search" in record.getMessage() for record in caplog.records)
+
+
+def test_frames_without_words_score_as_the_empty_frame_does(monkeypatch):
+    # Frames stored while bge was down carry no words. Left out of the words'
+    # spread, the one frame whose words held the bottle stood out by nothing,
+    # and two frames of a lamp the picture search liked came first.
+    import itertools
+
+    _clock(monkeypatch, itertools.count(10.0, 10.0))
+    words = FakeWords()
+    mem = FrameMemory(embedder=FakeEmbedder(), text_embedder=words)
+    mem.remember(_frame(0), [{"label": "bottle"}])
+    working = words.embed
+    words.embed = lambda texts: (_ for _ in ()).throw(OSError("bge down"))
+    for stamp in (1, 1, 2, 2):
+        mem.remember(_frame(stamp), [{"label": "person"}])
+    words.embed = working
+    mem._embedder.embed_text = lambda text: np.asarray([0.0, 1.0, 0.0], np.float32)  # the lamp
+    found = mem.recall("a bottle")
+    assert found[0]["labels"] == ["bottle"] and found[0]["found_by"] == "words"
+
+
+def test_one_bge_call_finds_and_ranks(monkeypatch):
+    # The gate and the ranking share one embedding: a second call that
+    # failed would lose a question the first had already found.
+    mem = _words_and_pictures(monkeypatch, [(0, ["bottle"]), (2, ["person"])])
+    calls = []
+    embed = mem._text_embedder.query_embed
+    mem._text_embedder.query_embed = lambda texts: calls.append(texts) or embed(texts)
+    found = mem.recall("a bottle by the door")
+    assert found and len(calls) == 1
+    assert all(0.0 < frame["score"] <= 1.0 for frame in found), "the dashboard shows it"

@@ -121,7 +121,7 @@ class WebDashboard:
 
     def on_recall(self, hits: list[dict]) -> None:
         """Show the frames a query recalled. `hits` are stored frames
-        (emulator/frame_memory.py's recall_text, day_frames or a look): each
+        (emulator/frame_memory.py's recall, day_frames or a look): each
         carries the stored `jpeg_b64` and the frame's YOLO `detections`
         (drawn as boxes).
 

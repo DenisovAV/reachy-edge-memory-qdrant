@@ -559,43 +559,63 @@ class FrameMemory:
         out by their pictures by 4.4-6.5. Measured against only the 100 best
         of each search instead of all frames, 21 of 34: among a hundred
         frames of "person", one stands out more than it does among all."""
-        if not self.recall_text(query, before=before):
+        query = query.strip()
+        if self._text_embedder is None or not query:
             return []
-        best = self._standing(query, before)[:k]
+        # One bge call for the gate and the ranking both: a second one that
+        # failed would lose a question the first had already found.
+        words = [float(x) for x in next(iter(self._text_embedder.query_embed([query])))]
+        if not self._words_hits(words, k, before):
+            return []
+        best = self._standing(query, words, before)[:k]
         with self._lock:
-            rows = dict(self._store.get([point_id for point_id, _found in best]))
-        return [{**rows[point_id], "found_by": found_by}
-                for point_id, found_by in best if point_id in rows]
+            rows = dict(self._store.get([point_id for point_id, *_ in best]))
+        # `score` is the found_by search's own cosine, as a frame the words
+        # alone found always carried it (the dashboard shows it).
+        return [{**rows[point_id], "found_by": found_by, "score": score}
+                for point_id, found_by, score in best if point_id in rows]
 
-    def _standing(self, query: str, before: float | None) -> list[tuple[str, str]]:
+    def _standing(self, query: str, words: list[float],
+                  before: float | None) -> list[tuple[str, str, float]]:
         """Every frame stored before `before`, best first, by how far it
         stands out — in its words' scores or its picture's, each measured in
         that search's own spread over all the frames — with the search it
-        stood out in ("words" or "picture")."""
-        searches = {"words": (TEXT_VECTOR, [float(x) for x in next(iter(
-            self._text_embedder.query_embed([query.strip()])))])}
+        stood out in ("words" or "picture") and its score there.
+
+        A frame stored without words of its own (bge was down when it was
+        written) scores what the empty frame does: it names nothing. Left
+        out, the words' spread would be measured over the few frames that
+        have words — over one, it is none at all — and any picture would
+        beat a frame whose words held exactly what was asked.
+
+        The shard's searches are not under this memory's lock: they only
+        read, the store serialises each call itself, and the scene writer
+        is not held up for the length of two scorings of every frame."""
+        query_filter = self._frames_before(before)
+        every = self._store.count(query_filter)
+        if not every:
+            return []
+        scored = {"words": dict(self._store.nearest_ids(words, every, query_filter,
+                                                        using=TEXT_VECTOR))}
         in_pictures = self._in_pictures_space(query)
         if in_pictures is not None:
-            searches["picture"] = (IMAGE_VECTOR, in_pictures)
-        query_filter = self._frames_before(before)
-        standing: dict[str, tuple[float, str]] = {}
-        with self._lock:
-            every = self._store.count(query_filter)
-            if not every:
-                return []
-            scored = {name: self._store.nearest_ids(vector, every, query_filter, using=using)
-                      for name, (using, vector) in searches.items()}
-        for name, hits in scored.items():
-            scores = np.asarray([score for _point_id, score in hits], dtype=np.float64)
+            scored["picture"] = dict(self._store.nearest_ids(in_pictures, every, query_filter,
+                                                             using=IMAGE_VECTOR))
+            empty = self._empty_frame_score(words)
+            for point_id in scored["picture"]:
+                scored["words"].setdefault(point_id, empty)
+        standing: dict[str, tuple[float, str, float]] = {}
+        for name, scores in scored.items():
+            values = np.fromiter(scores.values(), dtype=np.float64, count=len(scores))
             # A search that scores every frame alike singles none out: each
             # stands out by nothing in it, rather than dropping out of the
             # answer altogether.
-            mean, spread = scores.mean(), scores.std() or 1.0
-            for point_id, score in hits:
+            mean, spread = values.mean(), values.std() or 1.0
+            for point_id, score in scores.items():
                 stands_out = (score - mean) / spread
-                if stands_out > standing.get(point_id, (-np.inf, ""))[0]:
-                    standing[point_id] = (stands_out, name)
-        return [(point_id, found_by) for point_id, (_z, found_by)
+                if stands_out > standing.get(point_id, (-np.inf,))[0]:
+                    standing[point_id] = (stands_out, name, score)
+        return [(point_id, found_by, score) for point_id, (_z, found_by, score)
                 in sorted(standing.items(), key=lambda item: item[1][0], reverse=True)]
 
     def people_seen(self, before: float | None = None) -> list[tuple[str, float]]:
@@ -630,7 +650,11 @@ class FrameMemory:
         query = query.strip()
         if self._text_embedder is None or not query:
             return []
-        vector = next(iter(self._text_embedder.query_embed([query])))
+        return self._words_hits(next(iter(self._text_embedder.query_embed([query]))),
+                                k, before)
+
+    def _words_hits(self, vector, k: int, before: float | None) -> list[dict]:
+        """recall_text for a question bge has already embedded."""
         with self._lock:
             hits = self._store.search([float(x) for x in vector], k,
                                       self._frames(), using=TEXT_VECTOR)
