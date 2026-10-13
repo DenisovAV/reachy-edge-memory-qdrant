@@ -415,17 +415,24 @@ def _down(text):
     raise OSError("connection refused")
 
 
+def _tower_failed(text):
+    raise RuntimeError("[ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : inference failed")
+
+
 @pytest.mark.parametrize("embed_text", [
     _down,
     lambda text: np.asarray(None, dtype=np.float32),   # {"vector": null}
     lambda text: np.ones((1, 3), np.float32),           # nested
     lambda text: np.ones(4, np.float32),                # another size
     lambda text: np.full(3, np.nan, np.float32),
-], ids=["down", "null", "nested", "size", "nan"])
+    lambda text: [10 ** 1000, 0, 0],                    # a number no float holds
+    _tower_failed,                                       # the text tower on the robot
+], ids=["down", "null", "nested", "size", "nan", "overflow", "onnx"])
 def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog, embed_text):
     # The words were searched already and found nothing: with the embed
-    # service down for the question, or answering no vector, the day is
-    # still the answer — led by the newest frame, and said in the log.
+    # service down for the question, answering no vector, or the text tower
+    # failing, the day is still the answer — led by the newest frame, and
+    # said in the log.
     import itertools
 
     _clock(monkeypatch, itertools.count(10.0, 10.0))  # the log reads the clock too
@@ -438,6 +445,25 @@ def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog, embed_text)
         day = mem.day_frames(limit=1, like="a door")
     assert [frame["ts"] for frame in day] == [20.0]
     assert any("no picture search" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.parametrize("embed_text, traceback", [(_down, False), (_tower_failed, True)],
+                         ids=["outage", "bug"])
+def test_only_a_failure_that_is_no_outage_is_logged_with_its_traceback(
+        monkeypatch, caplog, embed_text, traceback):
+    # An embed service that is down says so in one line; anything else may
+    # be a bug, and its traceback is what finds it.
+    import itertools
+
+    _clock(monkeypatch, itertools.count(10.0, 10.0))
+    embedder = FakeEmbedder()
+    mem = FrameMemory(embedder=embedder)
+    mem.remember(_frame(0), [{"label": "person"}])
+    embedder.embed_text = embed_text
+    with caplog.at_level("WARNING", logger="emulator.frame_memory"):
+        mem.day_frames(like="a door")
+    [record] = [r for r in caplog.records if "no picture search" in r.getMessage()]
+    assert bool(record.exc_info) is traceback
 
 
 def test_a_question_and_a_picture_in_different_spaces_fail_the_start():

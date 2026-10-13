@@ -476,11 +476,14 @@ class FrameMemory:
         vector for it — no gate (see the module docstring). None for an
         empty question.
 
-        None too when the question cannot be put in that space — the embed
-        service down, or a reply that is no vector. The words were searched
-        already and found nothing, so the day is still the answer; only its
-        lead is lost, and that is logged rather than taking the memory down
-        with it."""
+        None too when the question cannot be put in that space, whatever the
+        reason — the embed service down, a reply that is no vector, the text
+        tower itself failing on the robot. The words were searched already
+        and found nothing, so the day is still the answer; only its lead is
+        lost. That is logged rather than taking the memory down with it, and
+        anything but a service or a reply at fault is logged with its
+        traceback, so a bug is not mistaken for an outage. The shard's own
+        search below is not covered: a store that fails is the memory down."""
         from emulator.edge_store import all_of, less_than
 
         question = question.strip()
@@ -491,9 +494,10 @@ class FrameMemory:
             if vector.shape != (self._dim,) or not np.isfinite(vector).all():
                 raise ValueError(f"a question vector of shape {vector.shape}, "
                                  f"not {self._dim} numbers")
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001 — the day stands without its lead
             logger.warning("no picture search (%s: %s): the newest frame leads the day",
-                           type(exc).__name__, exc)
+                           type(exc).__name__, exc,
+                           exc_info=not isinstance(exc, (OSError, ValueError, KeyError)))
             return None
         query_filter = all_of(self._frames(),
                               less_than("ts", before) if before is not None else None)
