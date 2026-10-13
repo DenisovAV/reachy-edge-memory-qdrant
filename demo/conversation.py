@@ -360,9 +360,9 @@ def day_frames(query: str = "", *, frame_memory=None,
     `query` (the newest frame without one), then whatever looks least like it
     — because the newest four frames of a real evening were the same picture
     four times (closest pair 0.914) and picked this way they are four
-    different scenes (0.609). The lead is the picture search: "did you see a
-    door?", with no label for one, comes back with the door first, and the
-    model, looking, says so."""
+    different scenes (0.609). Where the pick starts is the picture search:
+    "did you see a door?", with no label for one, comes back with the door
+    among the frames, and the model, looking, says so."""
     if frame_memory is None:
         return []
     try:

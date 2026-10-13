@@ -28,10 +28,15 @@ class FakeEmbedder:
         return np.asarray(self._BASIS.get(idx, [0.0, 0.0, 0.0]), np.float32)
 
     def embed_text(self, text):
-        # A question lands on the picture of what it asks about; one about
-        # nothing in particular is as near every picture as any other.
-        idx = next((i for thing, i in self._LOOKS_LIKE.items() if thing in text), None)
-        return np.asarray(self._BASIS.get(idx, [1.0, 1.0, 1.0]), np.float32)
+        # A question lands on the pictures of what it asks about, nearest the
+        # first thing it names; one about nothing in particular is as near
+        # every picture as any other.
+        named = sorted((text.find(thing), i) for thing, i in self._LOOKS_LIKE.items()
+                       if thing in text)
+        if not named:
+            return np.ones(3, np.float32)
+        return sum(np.asarray(self._BASIS[i], np.float32) / (rank + 1)
+                   for rank, (_, i) in enumerate(named))
 
 
 def _frame(basis: int) -> np.ndarray:
@@ -384,14 +389,59 @@ def test_a_picture_older_than_the_pool_still_leads(monkeypatch):
 
 def test_a_picture_taken_during_this_turn_never_leads(monkeypatch):
     # The camera's frame of the door, taken while the question was asked, is
-    # the present: something from before the turn leads instead.
+    # the present: the nearest picture from before the turn leads instead,
+    # not merely the newest.
     _clock(monkeypatch, [10.0, 20.0, 30.0])
     mem = _mem()
-    mem.remember(_frame(1), [{"label": "person"}])
-    mem.remember(_frame(0), [{"label": "person"}])
+    mem.remember(_frame(1), [{"label": "person"}])   # a lamp
+    mem.remember(_frame(0), [{"label": "person"}])   # a cup
+    mem.remember(_frame(2), [{"label": "person"}])   # the door, during the turn
+    day = mem.day_frames(limit=1, before=25.0, like="a door, or else a lamp")
+    assert [frame["ts"] for frame in day] == [10.0]
+
+
+def test_the_lead_is_the_frame_itself_not_its_time(monkeypatch):
+    # Two frames stored in the same instant: the one whose picture matched
+    # leads, not whichever of the two the walk met first.
+    _clock(monkeypatch, [10.0, 10.0])
+    mem = _mem()
+    mem.remember(_frame(0), [{"label": "table"}])    # a cup
+    mem.remember(_frame(2), [{"label": "chair"}])    # a door
+    assert [frame["labels"] for frame in mem.day_frames(limit=1, like="a door")] == [["chair"]]
+    assert [frame["labels"] for frame in mem.day_frames(limit=1, like="a cup")] == [["table"]]
+
+
+def test_no_picture_search_still_leaves_the_day(monkeypatch, caplog):
+    # The words were searched already and found nothing: with the embed
+    # service down for the question, the day is still the answer — led by
+    # the newest frame, and said in the log.
+    import itertools
+
+    _clock(monkeypatch, itertools.count(10.0, 10.0))  # the log reads the clock too
+    embedder = FakeEmbedder()
+    mem = FrameMemory(embedder=embedder)
     mem.remember(_frame(2), [{"label": "person"}])
-    day = mem.day_frames(before=25.0, like="a door")
-    assert day and all(frame["ts"] < 25.0 for frame in day)
+    mem.remember(_frame(0), [{"label": "person"}])
+
+    def down(text):
+        raise OSError("connection refused")
+
+    embedder.embed_text = down
+    with caplog.at_level("WARNING", logger="emulator.frame_memory"):
+        day = mem.day_frames(limit=1, like="a door")
+    assert [frame["ts"] for frame in day] == [20.0]
+    assert any("no picture search" in record.getMessage() for record in caplog.records)
+
+
+def test_a_question_and_a_picture_in_different_spaces_fail_the_start():
+    # A text tower that is missing or of another size would fail the first
+    # question no frame's words answer; it fails the start instead.
+    class Mismatched(FakeEmbedder):
+        def embed_text(self, text):
+            return np.ones(4, np.float32)
+
+    with pytest.raises(ValueError, match="not one space"):
+        FrameMemory(embedder=Mismatched())
 
 
 class FakeWords:
